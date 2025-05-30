@@ -1,11 +1,11 @@
-/* vm.c: Generic interface for virtual memory objects. */
+/* vm.c: 가상 메모리 객체를 위한 일반적인 인터페이스. */
 
 #include "threads/malloc.h"
 #include "vm/vm.h"
 #include "vm/inspect.h"
 
-/* Initializes the virtual memory subsystem by invoking each subsystem's
- * intialize codes. */
+/* 각 서브시스템의 초기화 코드를 호출하여 가상 메모리 서브시스템을 초기화합니다. */
+
 void
 vm_init (void) {
 	vm_anon_init ();
@@ -18,9 +18,10 @@ vm_init (void) {
 	/* TODO: Your code goes here. */
 }
 
-/* Get the type of the page. This function is useful if you want to know the
- * type of the page after it will be initialized.
- * This function is fully implemented now. */
+/* 페이지의 타입을 가져옵니다. 이 함수는 페이지가 초기화된 후 
+ * 해당 페이지의 타입을 알고 싶을 때 유용합니다.
+ * 이 함수는 현재 완전히 구현되어 있습니다. */
+
 enum vm_type
 page_get_type (struct page *page) {
 	int ty = VM_TYPE (page->operations->type);
@@ -32,14 +33,14 @@ page_get_type (struct page *page) {
 	}
 }
 
-/* Helpers */
+/* 헬퍼 함수들 */
 static struct frame *vm_get_victim (void);
 static bool vm_do_claim_page (struct page *page);
 static struct frame *vm_evict_frame (void);
 
-/* Create the pending page object with initializer. If you want to create a
- * page, do not create it directly and make it through this function or
- * `vm_alloc_page`. */
+/* 초기화자(initializer)를 사용하여 대기 중인 페이지 객체를 생성합니다.
+ * 페이지를 만들고 싶다면 직접 생성하지 말고,
+ * 이 함수나 `vm_alloc_page`를 통해 생성해야 합니다. */
 bool
 vm_alloc_page_with_initializer (enum vm_type type, void *upage, bool writable,
 		vm_initializer *init, void *aux) {
@@ -48,19 +49,20 @@ vm_alloc_page_with_initializer (enum vm_type type, void *upage, bool writable,
 
 	struct supplemental_page_table *spt = &thread_current ()->spt;
 
-	/* Check wheter the upage is already occupied or not. */
+	/* upage가 이미 점유되어 있는지 확인합니다. */
 	if (spt_find_page (spt, upage) == NULL) {
-		/* TODO: Create the page, fetch the initialier according to the VM type,
-		 * TODO: and then create "uninit" page struct by calling uninit_new. You
-		 * TODO: should modify the field after calling the uninit_new. */
+		/* TODO: 페이지를 생성하고, VM 타입에 따라 적절한 initializer를 선택한 후,
+		 * TODO: uninit_new를 호출하여 "uninit" 페이지 구조체를 생성합니다.
+		 * TODO: uninit_new를 호출한 후 해당 필드를 수정해야 합니다. */
 
-		/* TODO: Insert the page into the spt. */
+
+		/* TODO: 페이지를 spt에 삽입합니다. */
 	}
 err:
 	return false;
 }
 
-/* Find VA from spt and return page. On error, return NULL. */
+/* spt에서 VA를 찾아 해당 페이지를 반환합니다. 오류가 발생하면 NULL을 반환합니다. */
 struct page *
 spt_find_page (struct supplemental_page_table *spt UNUSED, void *va UNUSED) {
 	struct page *page = NULL;
@@ -69,7 +71,7 @@ spt_find_page (struct supplemental_page_table *spt UNUSED, void *va UNUSED) {
 	return page;
 }
 
-/* Insert PAGE into spt with validation. */
+/* PAGE를 유효성 검사를 거쳐 spt에 삽입합니다. */
 bool
 spt_insert_page (struct supplemental_page_table *spt UNUSED,
 		struct page *page UNUSED) {
