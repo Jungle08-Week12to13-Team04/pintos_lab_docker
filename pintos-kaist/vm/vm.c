@@ -87,7 +87,7 @@ spt_remove_page (struct supplemental_page_table *spt, struct page *page) {
 	return true;
 }
 
-/* Get the struct frame, that will be evicted. */
+/* 교체(eviction)될 struct frame을 가져옵니다. */
 static struct frame *
 vm_get_victim (void) {
 	struct frame *victim = NULL;
@@ -96,8 +96,8 @@ vm_get_victim (void) {
 	return victim;
 }
 
-/* Evict one page and return the corresponding frame.
- * Return NULL on error.*/
+/* 하나의 페이지를 교체하고 해당 frame을 반환합니다.
+ * 오류가 발생하면 NULL을 반환합니다. */
 static struct frame *
 vm_evict_frame (void) {
 	struct frame *victim UNUSED = vm_get_victim ();
@@ -106,10 +106,9 @@ vm_evict_frame (void) {
 	return NULL;
 }
 
-/* palloc() and get frame. If there is no available page, evict the page
- * and return it. This always return valid address. That is, if the user pool
- * memory is full, this function evicts the frame to get the available memory
- * space.*/
+/* palloc()을 통해 frame을 얻습니다. 사용 가능한 페이지가 없다면 페이지를 교체(evict)한 후 반환합니다.
+ * 이 함수는 항상 유효한 주소를 반환합니다. 즉, 사용자 풀 메모리가 가득 찼을 때도,
+ * 이 함수는 frame을 교체하여 가용 메모리를 확보합니다. */
 static struct frame *
 vm_get_frame (void) {
 	struct frame *frame = NULL;
@@ -120,12 +119,12 @@ vm_get_frame (void) {
 	return frame;
 }
 
-/* Growing the stack. */
+/* 스택을 확장하는 작업. */
 static void
 vm_stack_growth (void *addr UNUSED) {
 }
 
-/* Handle the fault on write_protected page */
+/* 쓰기 보호(write_protected)된 페이지에서 발생한 fault를 처리합니다. */
 static bool
 vm_handle_wp (struct page *page UNUSED) {
 }
@@ -136,21 +135,21 @@ vm_try_handle_fault (struct intr_frame *f UNUSED, void *addr UNUSED,
 		bool user UNUSED, bool write UNUSED, bool not_present UNUSED) {
 	struct supplemental_page_table *spt UNUSED = &thread_current ()->spt;
 	struct page *page = NULL;
-	/* TODO: Validate the fault */
-	/* TODO: Your code goes here */
+	/* TODO: 해당 fault가 유효한지 확인합니다. */
+	/* TODO: 여기에 코드를 작성해야 합니다. */
 
 	return vm_do_claim_page (page);
 }
 
-/* Free the page.
- * DO NOT MODIFY THIS FUNCTION. */
+/* 페이지를 해제합니다.
+ * 이 함수는 수정하지 마세요. */
 void
 vm_dealloc_page (struct page *page) {
 	destroy (page);
 	free (page);
 }
 
-/* Claim the page that allocate on VA. */
+/* VA에 할당된 페이지를 확보(claim)합니다. */
 bool
 vm_claim_page (void *va UNUSED) {
 	struct page *page = NULL;
@@ -168,25 +167,25 @@ vm_do_claim_page (struct page *page) {
 	frame->page = page;
 	page->frame = frame;
 
-	/* TODO: Insert page table entry to map page's VA to frame's PA. */
+	/* TODO: 페이지의 VA를 프레임의 PA에 매핑하기 위한 페이지 테이블 엔트리를 삽입합니다. */
 
 	return swap_in (page, frame->kva);
 }
 
-/* Initialize new supplemental page table */
+/* 새로운 보조 페이지 테이블(supplemental page table)을 초기화합니다. */
 void
 supplemental_page_table_init (struct supplemental_page_table *spt UNUSED) {
 }
 
-/* Copy supplemental page table from src to dst */
+/* 보조 페이지 테이블을 src에서 dst로 복사합니다. */
 bool
 supplemental_page_table_copy (struct supplemental_page_table *dst UNUSED,
 		struct supplemental_page_table *src UNUSED) {
 }
 
-/* Free the resource hold by the supplemental page table */
+/* 보조 페이지 테이블이 보유한 자원을 해제합니다. */
 void
 supplemental_page_table_kill (struct supplemental_page_table *spt UNUSED) {
-	/* TODO: Destroy all the supplemental_page_table hold by thread and
-	 * TODO: writeback all the modified contents to the storage. */
+	/* TODO: 스레드가 보유한 모든 supplemental_page_table을 제거하고,
+	 * TODO: 수정된 내용을 스토리지에 다시 씁니다(writeback). */
 }
