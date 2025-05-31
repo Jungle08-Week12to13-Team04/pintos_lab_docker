@@ -46,6 +46,7 @@ struct page {
 	struct frame *frame;   /* 프레임에 대한 역참조 포인터 */
 
 	/* Your implementation */
+	struct hash_elem hash_elem; /* [*]3-Q. page 구조체를 SPT 내부의 hash에 연결 */
 
 	/* 타입별 데이터는 union 안에 결합되어 있습니다.
 	 * 각 함수는 자동으로 현재 union 타입을 감지합니다. */
@@ -85,6 +86,7 @@ struct page_operations {
  * 이 구조체에 대해 어떤 특정한 설계를 강제하고 싶지 않습니다.
  * 전체적인 설계는 전적으로 여러분에게 달려 있습니다. */
 struct supplemental_page_table {
+	struct hash spt; /* [*]3-Q. 가상 주소 기반의 hash 테이블 형성 */
 };
 
 #include "threads/thread.h"

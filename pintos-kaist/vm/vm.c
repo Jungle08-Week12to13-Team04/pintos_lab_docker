@@ -3,6 +3,9 @@
 #include "threads/malloc.h"
 #include "vm/vm.h"
 #include "vm/inspect.h"
+#include "lib/kernel/hash.h" /* [*]3-Q. hash 헤더 연결 */
+#include "threads/vaddr.h" /* [*]3-Q. pg_round_down 매크로 함수 */
+
 
 /* 각 서브시스템의 초기화 코드를 호출하여 가상 메모리 서브시스템을 초기화합니다. */
 
@@ -65,20 +68,25 @@ err:
 /* spt에서 VA를 찾아 해당 페이지를 반환합니다. 오류가 발생하면 NULL을 반환합니다. */
 struct page *
 spt_find_page (struct supplemental_page_table *spt UNUSED, void *va UNUSED) {
-	struct page *page = NULL;
-	/* TODO: Fill this function. */
+	struct page temp;
+	temp.va = pg_round_down(va); /* 찾을 va를 페이지 단위로 정렬하기 */
+	struct hash_elem *e = hash_find(&spt->spt, &temp.hash_elem);
 
-	return page;
+	if (e != NULL){
+		/* [*]3-Q. e가 NULL이 아니라면, hash entry에서 struct page로 변환해서 반환 */
+		return hash_entry(e, struct page, hash_elem);
+	} else {
+		/* [*]3-Q. NULL일 경우, struct page가 존재하지 않음을 의미, NULL 반환 */
+		return NULL ;
+	}
 }
 
 /* PAGE를 유효성 검사를 거쳐 spt에 삽입합니다. */
 bool
-spt_insert_page (struct supplemental_page_table *spt UNUSED,
-		struct page *page UNUSED) {
-	int succ = false;
-	/* TODO: Fill this function. */
-
-	return succ;
+spt_insert_page (struct supplemental_page_table *spt, struct page *page) {
+	/* [*]3-Q. hash_insert는 동일한 키가 존재할 경우 기존 요소를 반환 -> FALSE */
+	return hash_insert(&spt->spt, &page->hash_elem) == NULL; 
+	/* [*]3-Q. 삽입 성공 시 NULL 반환 -> TRUE */
 }
 
 void
@@ -136,6 +144,9 @@ vm_try_handle_fault (struct intr_frame *f UNUSED, void *addr UNUSED,
 	struct supplemental_page_table *spt UNUSED = &thread_current ()->spt;
 	struct page *page = NULL;
 	/* TODO: 해당 fault가 유효한지 확인합니다. */
+
+
+	
 	/* TODO: 여기에 코드를 작성해야 합니다. */
 
 	return vm_do_claim_page (page);
@@ -175,6 +186,7 @@ vm_do_claim_page (struct page *page) {
 /* 새로운 보조 페이지 테이블(supplemental page table)을 초기화합니다. */
 void
 supplemental_page_table_init (struct supplemental_page_table *spt UNUSED) {
+	hash_init(&spt->spt, page_hash, page_less, NULL);
 }
 
 /* 보조 페이지 테이블을 src에서 dst로 복사합니다. */
@@ -188,4 +200,22 @@ void
 supplemental_page_table_kill (struct supplemental_page_table *spt UNUSED) {
 	/* TODO: 스레드가 보유한 모든 supplemental_page_table을 제거하고,
 	 * TODO: 수정된 내용을 스토리지에 다시 씁니다(writeback). */
+}
+
+
+/* [*]Q-3. SPT용 hash함수 생성 */
+
+/* [*]Q-3. sturct page의 va 값을 바탕으로 해시값 생성 */
+unsigned
+page_hash(const struct hash_elem *e, void *aux UNUSED) {
+    const struct page *p = hash_entry(e, struct page, hash_elem);
+    return hash_bytes(&p->va, sizeof p->va);
+}
+
+/* [*]Q-3. 해시 테이블에서 entry를 서로 비교할 때 사용하는 함수(check for duplicate, sort)*/
+bool
+page_less(const struct hash_elem *a, const struct hash_elem *b, void *aux UNUSED) {
+    const struct page *pa = hash_entry(a, struct page, hash_elem);
+    const struct page *pb = hash_entry(b, struct page, hash_elem);
+    return pa->va < pb->va;
 }
