@@ -23,6 +23,15 @@
         "file.h": "c",
         "list.h": "c",
         "malloc.h": "c",
-        "syn-read.h": "c"
-}
+        "syn-read.h": "c",
+        "page_cache.h": "c",
+        "array": "c",
+        "chrono": "c",
+        "istream": "c",
+        "ostream": "c",
+        "ratio": "c",
+        "tuple": "c",
+        "type_traits": "c",
+        "utility": "c"
+    }
 }
