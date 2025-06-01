@@ -57,6 +57,9 @@ vm_alloc_page_with_initializer (enum vm_type type, void *upage, bool writable,
 		/* TODO: 페이지를 생성하고, VM 타입에 따라 적절한 initializer를 선택한 후,
 		 * TODO: uninit_new를 호출하여 "uninit" 페이지 구조체를 생성합니다.
 		 * TODO: uninit_new를 호출한 후 해당 필드를 수정해야 합니다. */
+		struct page *new_page = malloc(sizeof(struct page));
+		if (new_page == NULL)
+
 
 
 		/* TODO: 페이지를 spt에 삽입합니다. */
@@ -70,7 +73,7 @@ struct page *
 spt_find_page (struct supplemental_page_table *spt UNUSED, void *va UNUSED) {
 	struct page temp;
 	temp.va = pg_round_down(va); /* 찾을 va를 페이지 단위로 정렬하기 */
-	struct hash_elem *e = hash_find(&spt->spt, &temp.hash_elem);
+	struct hash_elem *e = hash_find(&spt->spt, &temp.hash_elem); /* [*]3-Q. 임시 page를 만들어 해당 주소를 가진 entry를 hash table에서 찾음 */
 
 	if (e != NULL){
 		/* [*]3-Q. e가 NULL이 아니라면, hash entry에서 struct page로 변환해서 반환 */
@@ -144,9 +147,6 @@ vm_try_handle_fault (struct intr_frame *f UNUSED, void *addr UNUSED,
 	struct supplemental_page_table *spt UNUSED = &thread_current ()->spt;
 	struct page *page = NULL;
 	/* TODO: 해당 fault가 유효한지 확인합니다. */
-
-
-	
 	/* TODO: 여기에 코드를 작성해야 합니다. */
 
 	return vm_do_claim_page (page);
@@ -200,6 +200,7 @@ void
 supplemental_page_table_kill (struct supplemental_page_table *spt UNUSED) {
 	/* TODO: 스레드가 보유한 모든 supplemental_page_table을 제거하고,
 	 * TODO: 수정된 내용을 스토리지에 다시 씁니다(writeback). */
+	hash_destroy(&spt->spt, page_destroy);	
 }
 
 
@@ -218,4 +219,10 @@ page_less(const struct hash_elem *a, const struct hash_elem *b, void *aux UNUSED
     const struct page *pa = hash_entry(a, struct page, hash_elem);
     const struct page *pb = hash_entry(b, struct page, hash_elem);
     return pa->va < pb->va;
+}
+
+static void
+page_destroy(struct hash_elem *e, void *aux UNUSED){
+	struct page *page = hash_entry(e, struct page, hash_elem);
+	vm_dealloc_page(page);
 }
