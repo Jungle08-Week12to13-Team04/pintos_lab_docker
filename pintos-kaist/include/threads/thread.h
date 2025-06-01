@@ -6,9 +6,9 @@
 #include <stdint.h>
 #include "threads/synch.h" // [*]2-B. include 추가
 #include "threads/interrupt.h"
-#ifdef VM
-#include "vm/vm.h"
-#endif
+// #ifdef VM
+// #include "vm/vm.h"
+// #endif
 
 /* States in a thread's life cycle. */
 enum thread_status
@@ -22,6 +22,12 @@ enum thread_status
 /* Thread identifier type.
    You can redefine this to whatever type you like. */
 typedef int tid_t;
+
+//[*]3-B. 아래로 내려 줌
+#ifdef VM
+#include "vm/vm.h"
+#endif
+
 #define TID_ERROR ((tid_t) - 1) /* Error value for tid_t. */
 
 /* Thread priorities. */

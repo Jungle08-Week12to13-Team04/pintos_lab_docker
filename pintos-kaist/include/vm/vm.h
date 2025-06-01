@@ -2,6 +2,7 @@
 #define VM_VM_H
 #include <stdbool.h>
 #include "threads/palloc.h"
+#include "lib/kernel/hash.h" // [*]3-B. spt - hash 사용
 
 enum vm_type {
 	/* 초기화되지 않은 페이지 */
@@ -46,6 +47,8 @@ struct page {
 	struct frame *frame;   /* 프레임에 대한 역참조 포인터 */
 
 	/* Your implementation */
+	struct hash_elem hash_elem; // [*]3-B. hash 연결 list_elem
+	int writable; // [*]3-B. writable 필드 추가
 
 	/* 타입별 데이터는 union 안에 결합되어 있습니다.
 	 * 각 함수는 자동으로 현재 union 타입을 감지합니다. */
@@ -76,6 +79,14 @@ struct page_operations {
 	enum vm_type type;
 };
 
+// [*]3-B. 지연 로딩(lazy loading) 시에 필요한 정보를 넘기기 위한 aux 포인터로 사용됨 (파일 매핑 관련 정보)
+struct lazy_load_arg {
+    struct file *file;     // 로드할 대상 파일 포인터
+    off_t ofs;             // 해당 파일 내 offset (시작 위치)
+    size_t read_bytes;     // 파일에서 읽을 바이트 수
+    size_t zero_bytes;     // 0으로 채워야 할 바이트 수
+};
+
 #define swap_in(page, v) (page)->operations->swap_in ((page), v)
 #define swap_out(page) (page)->operations->swap_out (page)
 #define destroy(page) \
@@ -85,6 +96,7 @@ struct page_operations {
  * 이 구조체에 대해 어떤 특정한 설계를 강제하고 싶지 않습니다.
  * 전체적인 설계는 전적으로 여러분에게 달려 있습니다. */
 struct supplemental_page_table {
+	struct hash spt_hash; // [*]3-B. spt - hash 사용
 };
 
 #include "threads/thread.h"
@@ -108,5 +120,9 @@ bool vm_alloc_page_with_initializer (enum vm_type type, void *upage,
 void vm_dealloc_page (struct page *page);
 bool vm_claim_page (void *va);
 enum vm_type page_get_type (struct page *page);
+
+//[*]3-B. 추가
+unsigned page_hash(const struct hash_elem *p_, void *aux UNUSED);
+bool page_less(const struct hash_elem *a_, const struct hash_elem *b_, void *aux);
 
 #endif  /* VM_VM_H */

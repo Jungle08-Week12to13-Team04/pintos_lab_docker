@@ -23,6 +23,13 @@
         "file.h": "c",
         "list.h": "c",
         "malloc.h": "c",
-        "syn-read.h": "c"
-}
+        "syn-read.h": "c",
+        "unordered_map": "c",
+        "vector": "c",
+        "memory": "c",
+        "optional": "c",
+        "string_view": "c",
+        "system_error": "c",
+        "page_cache.h": "c"
+    }
 }
