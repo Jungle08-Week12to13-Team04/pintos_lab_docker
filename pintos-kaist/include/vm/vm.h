@@ -63,6 +63,8 @@ struct page {
 struct frame {
 	void *kva;
 	struct page *page;
+	struct list_elem elem;// 프레임 테이블 리스트 요소
+    bool pinned;// 이빅션 보호 여부
 };
 
 /* The function table for page operations.
@@ -101,6 +103,13 @@ void vm_init (void);
 bool vm_try_handle_fault (struct intr_frame *f, void *addr, bool user,
 		bool write, bool not_present);
 
+
+//이현재가 추가한 선언
+struct frame *frame_allocate(enum palloc_flags flags, struct page *page);// Frame Table에 새 프레임 할당
+void frame_free(struct frame *f);// Frame Table에서 프레임 제거 및 메모리 반환
+void *evict_frame(void);// Eviction 대상 프레임 내보내기
+//여까지 세개
+
 #define vm_alloc_page(type, upage, writable) \
 	vm_alloc_page_with_initializer ((type), (upage), (writable), NULL, NULL)
 bool vm_alloc_page_with_initializer (enum vm_type type, void *upage,
@@ -108,5 +117,7 @@ bool vm_alloc_page_with_initializer (enum vm_type type, void *upage,
 void vm_dealloc_page (struct page *page);
 bool vm_claim_page (void *va);
 enum vm_type page_get_type (struct page *page);
+
+
 
 #endif  /* VM_VM_H */
