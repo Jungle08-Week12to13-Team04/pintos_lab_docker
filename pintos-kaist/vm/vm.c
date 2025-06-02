@@ -287,7 +287,7 @@ vm_get_frame (void) {
     frame->kva = palloc_get_page(PAL_USER);
     if (frame->kva == NULL) { // 사용자 풀에 빈 페이지가 없다면 eviction 수행
         free(frame); // 할당한 frame 구조체 메모리 해제
-        frame = vm_evict_frame(); // victim 프레임 확보
+        frame = vm_evict_frame(); // victim 프레임 확보 (미구현)
         if(frame == NULL)
             return NULL;
     }   else {
