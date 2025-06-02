@@ -1,138 +1,18 @@
 /* vm.c: 가상 메모리 객체를 위한 일반적인 인터페이스. */
-
 #include "threads/malloc.h"
 #include "vm/vm.h"
 #include "vm/inspect.h"
-#include "lib/kernel/hash.h" /* [*]3-Q. hash 헤더 연결 */
-#include "threads/vaddr.h" /* [*]3-Q. pg_round_down 매크로 함수 */
+#include "lib/kernel/hash.h"
+#include "threads/vaddr.h"
 
+struct list frame_table;
+struct lock frame_table_lock;
 
-struct list frame_table;// 전역 Frame Table 자료구조
-struct lock frame_table_lock;// 전역 Frame Table 자료구조
+/* [!] SPT 해시 관련 함수 프로토타입 선언 */
+unsigned page_hash(const struct hash_elem *e, void *aux UNUSED);
+bool page_less(const struct hash_elem *a, const struct hash_elem *b, void *aux UNUSED);
+void page_destroy(struct hash_elem *e, void *aux UNUSED);
 
-// 프레임 할당 함수
-// frame_allocate()
-// 프레임을 할당하고 Frame Table에 등록하는 함수이다.
-struct frame *
-frame_allocate(enum palloc_flags flags, struct page *page) {
-    // 1. palloc_get_page()로 물리 프레임을 할당한다.
-    void *kva = palloc_get_page(flags); // palloc_get_page는 PAL_USER로 할당
-    if (kva == NULL) { // 2. 물리 프레임이 부족하면 Eviction을 시도
-        kva = evict_frame(); // evict_frame()에서 프레임 확보
-    }
-
-    // 3. frame 구조체를 위한 메모리 할당
-    struct frame *f = malloc(sizeof(struct frame)); // malloc으로 struct frame 공간 확보
-    ASSERT(f != NULL); // 할당 실패 시 Panic 발생
-
-    // 4. frame 구조체 필드 채우기
-    f->kva = kva; // 커널 가상주소 설정
-    f->page = page; // 연결된 유저 페이지
-    f->pinned = false; // 기본적으로 Eviction 보호 상태 아님
-
-    // 5. 전역 Frame Table에 추가 (락으로 보호)
-    lock_acquire(&frame_table_lock); // Frame Table 보호 락 획득
-    list_push_back(&frame_table, &f->elem); // Frame Table에 frame 추가
-    lock_release(&frame_table_lock); // 락 해제
-
-    // 6. 생성한 frame 반환
-    return f; // 성공적으로 할당된 frame 반환
-}
-
-
-// frame_free()
-// 이미 할당된 프레임을 해제하는 함수이다.
-// Frame Table에서 제거하고, 물리 메모리도 반환하며, frame 구조체 자체도 메모리 해제한다.
-void frame_free(struct frame *f) {
-    // 1. 전달받은 frame 포인터가 NULL이 아닌지 확인한다.
-    ASSERT(f != NULL); // NULL이면 치명적 오류로 Panic
-
-    // 2. Frame Table에서 이 프레임을 제거하기 위해 락을 획득한다.
-    lock_acquire(&frame_table_lock); // Frame Table 보호 락 획득
-
-    // 3. Frame Table 리스트에서 프레임을 제거한다.
-    list_remove(&f->elem); // 프레임 리스트에서 요소 제거
-
-    // 4. Frame Table의 락을 해제한다.
-    lock_release(&frame_table_lock); // 락 해제
-
-    // 5. 실제로 물리 메모리(프레임의 페이지)를 반환한다.
-    palloc_free_page(f->kva); // PintOS의 palloc_free_page로 페이지 반환
-
-    // 6. frame 구조체 자체의 메모리도 해제한다.
-    free(f); // malloc으로 할당했던 frame 구조체 공간 해제
-}
-
-
-
-// 프레임 Eviction 함수: 프레임이 부족할 때 하나를 선택해서 비우는 함수이다.
-void *evict_frame(void) {
-    // 1. Eviction 대상 프레임을 저장할 변수 선언
-    struct frame *victim = NULL;
-
-    // 2. Eviction 중에는 Frame Table에 동시 접근이 있으면 안 되므로 락을 획득한다.
-    lock_acquire(&frame_table_lock);
-
-    // 3. 프레임 테이블의 맨 처음 요소부터 순회 시작
-    struct list_elem *e = list_begin(&frame_table);
-
-    // 4. 무한 루프를 돌면서 Eviction 대상 프레임을 찾는다.
-    while (true) {
-        // 4-1. 리스트의 끝까지 다 돌았으면 다시 처음부터 시작한다.
-        if (e == list_end(&frame_table)) {
-            e = list_begin(&frame_table); // 리스트 처음으로 되돌리기
-        }
-
-        // 4-2. 리스트 요소를 frame 구조체로 변환한다.
-        struct frame *f = list_entry(e, struct frame, elem);
-
-        // 4-3. Eviction 후보 조건 검사
-        //      - pinned 상태가 아니어야 함 (Eviction 보호 안되는 상태)
-        //      - 실제 유저 페이지를 사용 중인 프레임이어야 함
-        if (!f->pinned && f->page != NULL) {
-            // TODO: 접근 비트 검사 로직을 Clock 알고리즘처럼 추가할 수 있다.
-            // 예) 첫 번째 탐색에서는 accessed bit를 클리어하고 넘어감.
-            // 예) 두 번째 탐색에서 accessed bit가 이미 클리어된 프레임을 Eviction 대상으로 선택.
-
-            // 4-4. 여기서는 단순히 조건을 만족하는 첫 프레임을 victim으로 선정
-            victim = f;
-            break; // Eviction 대상이 결정되면 루프 탈출
-        }
-
-        // 4-5. 다음 프레임으로 이동
-        e = list_next(e);
-    }
-
-    // 5. Eviction 대상이 여전히 NULL이면 치명적 오류로 Panic
-    if (victim == NULL) {
-        PANIC("No victim frame found!"); // Frame Table에 Eviction 가능한 프레임이 없으면 치명적 오류
-    }
-
-    // 6. Eviction 대상의 데이터를 swap-out (또는 파일에 다시 저장)
-    //    victim->page의 타입에 따라 anon/file의 swap_out 구현이 호출됨
-    swap_out(victim->page);
-
-    // 7. Frame Table에서 victim 프레임을 제거
-    list_remove(&victim->elem);
-
-    // 8. victim 프레임의 커널 가상주소(kva)를 저장해둔다.
-    void *kva = victim->kva;
-
-    // 9. victim의 frame 구조체 메모리 자체를 해제
-    free(victim);
-
-    // 10. Frame Table 락을 해제
-    lock_release(&frame_table_lock);
-
-    // 11. Eviction된 프레임의 커널 가상주소를 반환
-    return kva;
-}
-
-
-
-
-struct list frame_table;// 전역 Frame Table 자료구조
-struct lock frame_table_lock;// 전역 Frame Table 자료구조
 
 // 프레임 할당 함수
 // frame_allocate()
@@ -304,14 +184,13 @@ vm_alloc_page_with_initializer (enum vm_type type, void *upage, bool writable,
 		/* TODO: 페이지를 생성하고, VM 타입에 따라 적절한 initializer를 선택한 후,
 		 * TODO: uninit_new를 호출하여 "uninit" 페이지 구조체를 생성합니다.
 		 * TODO: uninit_new를 호출한 후 해당 필드를 수정해야 합니다. */
-		struct page *new_page = malloc(sizeof(struct page));
-		if (new_page == NULL)
+		// struct page *new_page = malloc(sizeof(struct page));
+		// if (new_page == NULL)
 
 
 
 		/* TODO: 페이지를 spt에 삽입합니다. */
 	}
-err:
 	return false;
 }
 
@@ -468,7 +347,7 @@ page_less(const struct hash_elem *a, const struct hash_elem *b, void *aux UNUSED
     return pa->va < pb->va;
 }
 
-static void
+void
 page_destroy(struct hash_elem *e, void *aux UNUSED){
 	struct page *page = hash_entry(e, struct page, hash_elem);
 	vm_dealloc_page(page);
