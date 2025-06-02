@@ -2,6 +2,7 @@
 
 #include "vm/vm.h"
 #include "devices/disk.h"
+#include "threads/vaddr.h"
 
 /* 아래 줄은 수정하지 마십시오 */
 static struct disk *swap_disk;
@@ -34,9 +35,12 @@ anon_initializer (struct page *page, enum vm_type type, void *kva) {
 }
 
 /* swap 디스크로부터 내용을 읽어 페이지를 swap in 합니다 */
+/* [*]3-Q */
 static bool
 anon_swap_in (struct page *page, void *kva) {
-	struct anon_page *anon_page = &page->anon;
+	// struct anon_page *anon_page = &page->anon;  // 일단 주석처리함
+	memset(kva, 0, PGSIZE); // 모든 byte를 0으로 채움
+	return true;
 }
 
 /* swap 디스크에 내용을 써서 페이지를 swap out 합니다 */

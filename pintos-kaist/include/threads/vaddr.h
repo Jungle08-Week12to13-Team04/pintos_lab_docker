@@ -12,6 +12,9 @@
  * See pte.h for functions and macros specifically for x86
  * hardware page tables. */
 
+#define MAX_STACK_SIZE (1 << 20)   // [*]3-Q. 스택 성장 조건 제한 1 MB
+
+
 #define BITMASK(SHIFT, CNT) (((1ul << (CNT)) - 1) << (SHIFT))
 
 /* Page offset (bits 0:12). */
