@@ -162,20 +162,37 @@ page_fault (struct intr_frame *f) {
 	not_present = (f->error_code & PF_P) == 0;
 	write = (f->error_code & PF_W) != 0;
 	user = (f->error_code & PF_U) != 0;
-	
-	if (is_kernel_vaddr(fault_addr)){
-		sys_exit(-1);
-		return;
-	}else if(not_present){
+
+	//[*]3-B. 변경	
+	// if (is_kernel_vaddr(fault_addr)){
+	// 	sys_exit(-1);
+	// 	return;
+	// }else if(not_present){
+	// 	sys_exit(-1);
+	// 	return;
+	// }
+
+#ifdef VM
+	/* For project 3 and later. */
+	// if (vm_try_handle_fault (f, fault_addr, user, write, not_present))
+	// 	return;
+
+	//[*]3-B. 변경	
+	if (!is_user_vaddr(fault_addr) || fault_addr == NULL) {
 		sys_exit(-1);
 		return;
 	}
 
-#ifdef VM
-	/* For project 3 and later. */
-	if (vm_try_handle_fault (f, fault_addr, user, write, not_present))
+	// Step 2. vm_try_handle_fault() → lazy load, stack growth 처리
+	if (vm_try_handle_fault(f, fault_addr, user, write, not_present))
 		return;
+
+	// Step 3. 그래도 처리 못 했으면 잘못된 접근 → 종료
+	sys_exit(-1);
+
 #endif
+	
+	sys_exit(-1);
 
 	/* Count page faults. */
 	page_fault_cnt++;

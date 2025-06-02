@@ -92,12 +92,18 @@ spt_find_page (struct supplemental_page_table *spt UNUSED, void *va UNUSED) {
 	/* TODO: Fill this function. */
 
 	//[*]3-B. spt에서 주어진 가상 주소 va에 해당하는 페이지 정보 찾기
-	page = malloc(sizeof(struct page)); // 해시 테이블에서 찾기 위해 사용할 임시 키 객체를 동적으로 생성
-    struct hash_elem *e;
-    page->va = va;
-    e = hash_find(&spt, &page->hash_elem); // spt->hash에서 page의 va를 키로 사용해 해당 hash_elem을 찾음
-    return e != NULL ? hash_entry(e, struct page, hash_elem) : NULL; // e가 존재하면 hash_entry()를 통해 struct page 포인터로 다시 변환
+	// page = malloc(sizeof(struct page)); // 해시 테이블에서 찾기 위해 사용할 임시 키 객체를 동적으로 생성
+    // struct hash_elem *e;
+    // page->va = va;
+    // e = hash_find(&spt, &page->hash_elem); // spt->hash에서 page의 va를 키로 사용해 해당 hash_elem을 찾음
+    // return e != NULL ? hash_entry(e, struct page, hash_elem) : NULL; // e가 존재하면 hash_entry()를 통해 struct page 포인터로 다시 변환
 
+	//[*]3-B. !!
+	struct page temp;
+	temp.va = pg_round_down(va);  // 페이지 정렬
+	struct hash_elem *e = hash_find(&spt->spt_hash, &temp.hash_elem);
+	if (e == NULL) return NULL;
+	return hash_entry(e, struct page, hash_elem);
 	// return page;
 }
 
@@ -190,8 +196,10 @@ vm_try_handle_fault (struct intr_frame *f UNUSED, void *addr UNUSED,
     {
         /* TODO: Validate the fault */
         page = spt_find_page(spt, addr);
-        if (page == NULL)
+        if (page == NULL){
+			printf("vm_try_handle/n");
             return false;
+		}
         if (write == 1 && page->writable == 0) // write 불가능한 페이지에 write 요청한 경우
             return false;
         return vm_do_claim_page(page);
