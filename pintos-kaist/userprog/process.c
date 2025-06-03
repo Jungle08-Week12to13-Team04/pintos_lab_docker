@@ -200,6 +200,7 @@ __do_fork(void *aux)
 
 	struct intr_frame *parent_tf = (struct intr_frame*) aux;
 	struct thread *cur = thread_current();
+	struct thread *parent = cur->parent;
 	// printf("%p\n", parent_tf);
 
 	memcpy(&cur->tf, parent_tf, sizeof(struct intr_frame));
@@ -217,8 +218,8 @@ __do_fork(void *aux)
 		goto error;
 	process_activate(cur);
 #ifdef VM
-	supplemental_page_table_init(&current->spt);
-	if (!supplemental_page_table_copy(&current->spt, &parent->spt))
+	supplemental_page_table_init(&cur->spt);
+	if (!supplemental_page_table_copy(&cur->spt, &parent->spt))
 		goto error;
 #else // 부모의 사용자 주소 공간을 자식에게 복사하는 과정 - VM을 사용하지 않는 경우
 	if (!pml4_for_each(cur->parent->pml4, duplicate_pte, cur->parent))

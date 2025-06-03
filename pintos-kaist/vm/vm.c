@@ -5,6 +5,7 @@
 #include "lib/kernel/hash.h"
 #include "threads/vaddr.h"
 
+
 struct list frame_table;
 struct lock frame_table_lock;
 
@@ -17,6 +18,7 @@ void page_destroy(struct hash_elem *e, void *aux UNUSED);
 // 프레임 할당 함수
 // frame_allocate()
 // 프레임을 할당하고 Frame Table에 등록하는 함수이다.
+//[*]3-L_
 struct frame *
 frame_allocate(enum palloc_flags flags, struct page *page) {
     // 1. palloc_get_page()로 물리 프레임을 할당한다.
@@ -47,6 +49,7 @@ frame_allocate(enum palloc_flags flags, struct page *page) {
 // frame_free()
 // 이미 할당된 프레임을 해제하는 함수이다.
 // Frame Table에서 제거하고, 물리 메모리도 반환하며, frame 구조체 자체도 메모리 해제한다.
+//[*]3-L_
 void frame_free(struct frame *f) {
     // 1. 전달받은 frame 포인터가 NULL이 아닌지 확인한다.
     ASSERT(f != NULL); // NULL이면 치명적 오류로 Panic
@@ -70,6 +73,7 @@ void frame_free(struct frame *f) {
 
 
 // 프레임 Eviction 함수: 프레임이 부족할 때 하나를 선택해서 비우는 함수이다.
+//[*]3-L_
 void *evict_frame(void) {
     // 1. Eviction 대상 프레임을 저장할 변수 선언
     struct frame *victim = NULL;
@@ -117,18 +121,19 @@ void *evict_frame(void) {
     swap_out(victim->page);
 
     // 7. Frame Table에서 victim 프레임을 제거
-    list_remove(&victim->elem);
+    //list_remove(&victim->elem);
 
     // 8. victim 프레임의 커널 가상주소(kva)를 저장해둔다.
     void *kva = victim->kva;
 
-    // 9. victim의 frame 구조체 메모리 자체를 해제
-    free(victim);
+    //아래 두줄은 메모리 누수 막기위해 추가했음(이현재0602_2318)
+    palloc_free_page(victim->kva); // 커널 물리 프레임 해제
+    free(victim); // frame 구조체 해제
 
-    // 10. Frame Table 락을 해제
+    // 9. Frame Table 락을 해제
     lock_release(&frame_table_lock);
 
-    // 11. Eviction된 프레임의 커널 가상주소를 반환
+    // 10. Eviction된 프레임의 커널 가상주소를 반환
     return kva;
 }
 
@@ -257,8 +262,12 @@ vm_get_frame (void) {
 }
 
 /* 스택을 확장하는 작업. */
+//[*]3-L_
 static void
-vm_stack_growth (void *addr UNUSED) {
+vm_stack_growth (void *addr) { // 스택 접근 fault 발생 시, 새로운 anon 페이지 할당 (스택 자동 확장)
+    void *va = pg_round_down(addr); // 페이지 단위 정렬
+    vm_alloc_page(VM_ANON | VM_MARKER_0, va, true); // 새 anon 페이지 할당 (VM_MARKER_0으로 스택임을 표시)
+    vm_claim_page(va); // 즉시 프레임에 연결 (fault 처리)
 }
 
 /* 쓰기 보호(write_protected)된 페이지에서 발생한 fault를 처리합니다. */
@@ -267,16 +276,37 @@ vm_handle_wp (struct page *page UNUSED) {
 }
 
 /* Return true on success */
+//[*]3-L_
 bool
-vm_try_handle_fault (struct intr_frame *f UNUSED, void *addr UNUSED,
-		bool user UNUSED, bool write UNUSED, bool not_present UNUSED) {
-	struct supplemental_page_table *spt UNUSED = &thread_current ()->spt;
-	struct page *page = NULL;
-	/* TODO: 해당 fault가 유효한지 확인합니다. */
-	/* TODO: 여기에 코드를 작성해야 합니다. */
+vm_try_handle_fault (struct intr_frame *f, void *addr,
+        bool user, bool write, bool not_present) {
+    //유효하지 않은 접근 (NULL이나 커널주소 접근)인 경우 false 반환
+    if (addr == NULL || is_kernel_vaddr(addr)) return false;
 
-	return vm_do_claim_page (page);
+    //현재 스레드의 supplemental page table(SPT) 가져오기
+    struct supplemental_page_table *spt = &thread_current()->spt;
+
+    //SPT에서 fault가 난 주소(addr)로 등록된 페이지 검색
+    struct page *page = spt_find_page(spt, addr);
+
+    // SPT에 해당 페이지가 없으면: (예: 스택 자동 확장 영역인지 확인)
+    if (page == NULL) {
+        //유저모드 접근 && 스택 범위(현재 rsp - 8 ~ PHYS_BASE)라면
+        if (user && addr >= f->rsp - 8 && addr < (void *)KERN_BASE) {
+            vm_stack_growth(addr); //스택 자동 확장: 새로운 anon 페이지 할당 + SPT에 추가
+            return true; //fault 처리 성공
+        }
+        //스택 영역이 아니면, fault 처리 실패
+        return false;
+    }
+
+    //쓰기 접근인데, 페이지가 writable이 아니면 처리 불가 (보호 위반)
+    if (write && !page->uninit.writable) return false;
+
+    //위 모든 조건을 통과했으면, 페이지를 실제로 프레임에 연결 (swap-in)
+    return vm_do_claim_page(page);
 }
+
 
 /* 페이지를 해제합니다.
  * 이 함수는 수정하지 마세요. */
@@ -287,26 +317,25 @@ vm_dealloc_page (struct page *page) {
 }
 
 /* VA에 할당된 페이지를 확보(claim)합니다. */
+//[*]3-L_
 bool
-vm_claim_page (void *va UNUSED) {
-	struct page *page = NULL;
-	/* TODO: Fill this function */
-
-	return vm_do_claim_page (page);
+vm_claim_page (void *va) { // 페이지 fault 처리: 주어진 va의 페이지 확보 (SPT를 확인 후 확보)
+    struct page *page = spt_find_page(&thread_current()->spt, va); // SPT에서 페이지 찾기
+    if (page == NULL) return false; // 없으면 실패
+    return vm_do_claim_page(page); // 페이지 확보 시도
 }
 
 /* Claim the PAGE and set up the mmu. */
+//[*]3-L_
 static bool
-vm_do_claim_page (struct page *page) {
-	struct frame *frame = vm_get_frame ();
+vm_do_claim_page (struct page *page) { // 페이지를 실제로 프레임에 연결
+    struct frame *frame = frame_allocate(PAL_USER, page); // 프레임 할당 (palloc_get_page 포함)
+    if (frame == NULL) return false;
 
-	/* Set links */
-	frame->page = page;
-	page->frame = frame;
+    frame->page = page; // 양방향 연결
+    page->frame = frame;
 
-	/* TODO: 페이지의 VA를 프레임의 PA에 매핑하기 위한 페이지 테이블 엔트리를 삽입합니다. */
-
-	return swap_in (page, frame->kva);
+    return swap_in (page, frame->kva); // 스왑 영역에서 데이터 복구 (없으면 zero-fill됨)
 }
 
 /* 새로운 보조 페이지 테이블(supplemental page table)을 초기화합니다. */

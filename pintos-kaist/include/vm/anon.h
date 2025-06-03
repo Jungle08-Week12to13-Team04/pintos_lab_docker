@@ -5,6 +5,7 @@ struct page;
 enum vm_type;
 
 struct anon_page {
+    size_t swap_slot; //[*]3-L_스왑영역 슬롯번호
 };
 
 void vm_anon_init (void);

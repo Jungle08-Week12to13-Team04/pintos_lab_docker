@@ -16,6 +16,8 @@ struct uninit_page {
 	void *aux;
 	/* struct page를 초기화하고 물리 주소(pa)를 가상 주소(va)에 매핑합니다 */
 	bool (*page_initializer) (struct page *, enum vm_type, void *kva);
+
+	bool writable; //[*]3-L_페이지 쓰기 가능 여부
 };
 
 void uninit_new (struct page *page, void *va, vm_initializer *init,
