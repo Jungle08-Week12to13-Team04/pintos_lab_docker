@@ -76,7 +76,7 @@ syscall_init (void) {
 void
 syscall_handler (struct intr_frame *f UNUSED) {
   // TODO: Your implementation goes here.
-
+  thread_current()->save_rsp = f->rsp;
   /* rax = 시스템 콜 넘버 */
   int syscall_n = f->R.rax; /* 시스템 콜 넘버 */
   switch (syscall_n)

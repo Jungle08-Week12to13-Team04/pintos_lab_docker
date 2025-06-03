@@ -40,7 +40,7 @@ anon_initializer (struct page *page, enum vm_type type, void *kva) {
 static bool
 anon_swap_in (struct page *page, void *kva) {
 	// struct anon_page *anon_page = &page->anon;
-	memset(kva, 0, PGSIZE); //[*]3-B. !!
+	memcpy(kva, page->frame->kva, PGSIZE); //[*]3-B. !!
     return true;
 }
 

@@ -795,7 +795,7 @@ validate_segment(const struct Phdr *phdr, struct file *file)
 // }
 
 
-//[*]3-B. !!
+//[*]3-B. argument passing stack 구성용 함수 변경
 void argument_stack(char **parse, int count, void **rsp) // 주소를 전달받았으므로 이중 포인터 사용
 {
     // 프로그램 이름, 인자 문자열 push
