@@ -4,6 +4,11 @@
 #include "vm/inspect.h"
 #include "lib/kernel/hash.h"
 #include "threads/vaddr.h"
+#include <stdio.h>//디버깅하려고 추가함(이현재)
+#include <string.h>//memcpy,memset때문에 추가함(이현재)
+#include "threads/mmu.h"//pml4_set_page사용을 위해 추가함(이현재)
+#include <stdint.h>  // uintptr_t 사용을 위해 추가
+
 
 
 struct list frame_table;
@@ -21,29 +26,33 @@ void page_destroy(struct hash_elem *e, void *aux UNUSED);
 //[*]3-L_
 struct frame *
 frame_allocate(enum palloc_flags flags, struct page *page) {
-    // 1. palloc_get_page()로 물리 프레임을 할당한다.
-    void *kva = palloc_get_page(flags); // palloc_get_page는 PAL_USER로 할당
-    if (kva == NULL) { // 2. 물리 프레임이 부족하면 Eviction을 시도
-        kva = evict_frame(); // evict_frame()에서 프레임 확보
+    void *kva = palloc_get_page(flags);
+    if (kva == NULL) {
+        kva = evict_frame();
+        if (kva == NULL) {
+            printf("[ERROR] frame_allocate: evict_frame 실패, 메모리 할당 불가능\n");
+            return NULL;
+        }
     }
 
-    // 3. frame 구조체를 위한 메모리 할당
-    struct frame *f = malloc(sizeof(struct frame)); // malloc으로 struct frame 공간 확보
-    ASSERT(f != NULL); // 할당 실패 시 Panic 발생
+    struct frame *f = malloc(sizeof(struct frame));
+    if (f == NULL) {
+        printf("[ERROR] frame_allocate: malloc 실패, 메모리 할당 불가능\n");
+        palloc_free_page(kva);
+        return NULL;
+    }
 
-    // 4. frame 구조체 필드 채우기
-    f->kva = kva; // 커널 가상주소 설정
-    f->page = page; // 연결된 유저 페이지
-    f->pinned = false; // 기본적으로 Eviction 보호 상태 아님
+    f->kva = kva;
+    f->page = page;
+    f->pinned = false;
 
-    // 5. 전역 Frame Table에 추가 (락으로 보호)
-    lock_acquire(&frame_table_lock); // Frame Table 보호 락 획득
-    list_push_back(&frame_table, &f->elem); // Frame Table에 frame 추가
-    lock_release(&frame_table_lock); // 락 해제
+    lock_acquire(&frame_table_lock);
+    list_push_back(&frame_table, &f->elem);
+    lock_release(&frame_table_lock);
 
-    // 6. 생성한 frame 반환
-    return f; // 성공적으로 할당된 frame 반환
+    return f;
 }
+
 
 
 // frame_free()
@@ -145,6 +154,7 @@ vm_init (void) {
 	vm_file_init ();
 	list_init(&frame_table);
 	lock_init(&frame_table_lock);
+    printf("[DEBUG] vm_init() 완료됨\n");
 #ifdef EFILESYS  /* For project 4 */
 	pagecache_init ();
 #endif
@@ -259,23 +269,39 @@ spt_remove_page (struct supplemental_page_table *spt, struct page *page) {
 }
 
 /* 교체(eviction)될 struct frame을 가져옵니다. */
+//[*]3-L
 static struct frame *
 vm_get_victim (void) {
-	struct frame *victim = NULL;
-	 /* TODO: The policy for eviction is up to you. */
-
-	return victim;
+    lock_acquire(&frame_table_lock);
+    struct frame *victim = NULL;
+    for (struct list_elem *e = list_begin(&frame_table); e != list_end(&frame_table); e = list_next(e)) {
+        struct frame *f = list_entry(e, struct frame, elem);
+        if (!f->pinned) {
+            victim = f;
+            break;
+        }
+    }
+    lock_release(&frame_table_lock);
+    return victim;
 }
+
 
 /* 하나의 페이지를 교체하고 해당 frame을 반환합니다.
  * 오류가 발생하면 NULL을 반환합니다. */
+//[*] 3-L
 static struct frame *
-vm_evict_frame (void) {
-	struct frame *victim UNUSED = vm_get_victim ();
-	/* TODO: swap out the victim and return the evicted frame. */
+vm_evict_frame(void) {
+    struct frame *victim = vm_get_victim();
+    if (victim == NULL)
+        PANIC("No victim frame found!");
 
-	return NULL;
+    swap_out(victim->page);
+    list_remove(&victim->elem);
+    
+    return victim; // 프레임 자체 반환 (free는 호출자가 결정)
 }
+
+
 
 /* palloc()을 통해 frame을 얻습니다. 사용 가능한 페이지가 없다면 페이지를 교체(evict)한 후 반환합니다.
  * 이 함수는 항상 유효한 주소를 반환합니다. 즉, 사용자 풀 메모리가 가득 찼을 때도,
@@ -296,7 +322,7 @@ vm_get_frame (void) {
         if(frame == NULL)
             return NULL;
     }   else {
-        list_push_back(&frame_table, &frame->frame_elem);
+        list_push_back(&frame_table, &frame->elem);
     }
 
     frame->page = NULL;  // 정상적 방법으로 frame을 확보한 경우, 초기화
@@ -323,51 +349,48 @@ vm_handle_wp (struct page *page UNUSED) {
 /* Return true on success */
 /* [*]3-Q. 페이지 폴트 발생 시, 접근한 가상 주소가 유효한지 검사
    필요한 경우 해당 페이지를 물리 메모리에 loading */
-bool
-vm_try_handle_fault (struct intr_frame *f UNUSED, void *addr UNUSED,
-		bool user UNUSED, bool write UNUSED, bool not_present UNUSED) {
-	struct supplemental_page_table *spt UNUSED = &thread_current ()->spt;
-	
-	/* TODO: 해당 fault가 유효한지 확인합니다. */
-	/* TODO: 여기에 코드를 작성해야 합니다. */
-    
-    // 일단 페이지 정렬 수행(페이지 경계 기준으로 내림) //
+
+bool vm_try_handle_fault(struct intr_frame *f, void *addr,
+                         bool user, bool write, bool not_present) {
+    printf("[DEBUG] vm_try_handle_fault: fault at addr=%p user=%d write=%d not_present=%d\n",
+           addr, user, write, not_present);
+
+    struct supplemental_page_table *spt = &thread_current()->spt;
     void *page_va = pg_round_down(addr);
 
-    // 1. page fault 유효성 검사 //
-    // 1-1. 잘못된 주소 (빈 영역, 커널 영억, GUARD 영역을 가리킬 경우)
-    if (addr == NULL)
+    if (addr == NULL || is_kernel_vaddr(addr)) {
+        printf("[DEBUG] vm_try_handle_fault: invalid address! addr=%p\n", addr);
         return false;
-    if (is_kernel_vaddr(addr))
-        return false;
-    if (addr >= USER_STACK && addr < KERN_BASE)
-        return false;
+    }
 
-    /* 2. VA를 기반으로 SPT에서 page 찾기 */
     struct page *page = spt_find_page(spt, page_va);
+    printf("[DEBUG] spt_find_page() returned: %p\n", page);
 
-    // 3. SPT에 존재하지 않을 경우 스택 확장 조건 확인.
-    if (page == NULL) {
-        // 3-1. 현재 rsp보다 8바이트 이하이며(push 직후)
-        // 3-2. 전체 스택 크기가 최대치를 초과하지 않음.
-        if (addr >= f->rsp - 8 && addr >= USER_STACK - MAX_STACK_SIZE) {
-            vm_stack_growth(addr); // 스택 확장
-            page = spt_find_page(spt, page_va); // 확장 후 다시 검색
-            if (page == NULL) // 그 때도 없으면 false 반환
+    if (!page) {
+        printf("[DEBUG] page not found in SPT. Checking stack growth...\n");
+        if ((user && addr >= USER_STACK - MAX_STACK_SIZE && addr >= f->rsp - 8)) {
+            printf("[DEBUG] stack growth triggered!\n");
+            vm_stack_growth(addr);
+            page = spt_find_page(spt, page_va);
+            printf("[DEBUG] after vm_stack_growth: page=%p\n", page);
+            if (!page)
                 return false;
         } else {
+            printf("[DEBUG] no stack growth. returning false.\n");
             return false;
         }
     }
 
-    // 4. 쓰기 요청인데 읽기 전용 페이지일 경우
-    if (write && !page->writable)
+    if (write && !page->writable) {
+        printf("[DEBUG] write to readonly page! returning false.\n");
         return false;
+    }
 
-
-    // 5. 이상 없을 경우 해당 페이지를 메모리에 로딩
+    printf("[DEBUG] calling vm_do_claim_page() for va=%p\n", page_va);
     return vm_do_claim_page(page);
 }
+
+
 
 
 /* 페이지를 해제합니다.
@@ -392,27 +415,44 @@ struct page *page = spt_find_page(&thread_current()->spt, va); // pst_find_page(
 
 /* Claim the PAGE and set up the mmu. */
 /* [*]3-Q. SPT에 등록된 페이지를 실제로 메모리에 load하고 VA-KVA 매핑까지 완료하는 역할*/
-static bool
-vm_do_claim_page (struct page *page) {
-    /* 1. 프레임 확보 */
-    struct frame *frame = vm_get_frame ();
-    if (frame == NULL)
+static bool vm_do_claim_page(struct page *page) {
+    struct frame *frame = vm_get_frame();
+    if (frame == NULL) {
+        printf("[ERROR] vm_do_claim_page: frame 할당 실패\n");
         return false;
+    }
 
-	/* 2. 확보한 frame과 page를 서로 연결 */
-	frame->page = page;
-	page->frame = frame;
+    frame->page = page;
+    page->frame = frame;
 
-    /* 3. 보조 저장소(anon / file / swap)로부터 실제 데이터 로딩 */
-    if (!swap_in(page, frame->kva))
+    if (!swap_in(page, frame->kva)) {
+        printf("[ERROR] vm_do_claim_page: swap_in 실패\n");
+        frame_free(frame);
         return false;
+    }
 
-    /* MMU의 페이지 테이블에 VA -> KVA 매핑을 추가 */
-    if (!pml4_set_page(thread_current()->pml4, page->va, frame->kva, page->writable))
+    //직전에 주소/플래그 출력
+    printf("[DEBUG] vm_do_claim_page: va=%p kva=%p writable=%d\n",
+           page->va, frame->kva, page->writable);
+
+    //커널 주소 여부도 체크
+    if (is_kernel_vaddr(page->va))
+        printf("[ERROR] vm_do_claim_page: 커널 영역 va=%p 매핑 시도!\n", page->va);
+
+    if (!pml4_set_page(thread_current()->pml4, page->va, frame->kva, page->writable)) {
+        printf("[ERROR] vm_do_claim_page: pml4_set_page 실패! va=%p kva=%p writable=%d\n",
+               page->va, frame->kva, page->writable);
+        frame_free(frame);
         return false;
+    }
 
-	return true;
+    return true;
 }
+
+
+
+
+
 
 /* 새로운 보조 페이지 테이블(supplemental page table)을 초기화합니다. */
 void
@@ -422,8 +462,33 @@ supplemental_page_table_init (struct supplemental_page_table *spt UNUSED) {
 
 /* 보조 페이지 테이블을 src에서 dst로 복사합니다. */
 bool
-supplemental_page_table_copy (struct supplemental_page_table *dst UNUSED,
-		struct supplemental_page_table *src UNUSED) {
+supplemental_page_table_copy (struct supplemental_page_table *dst,
+		struct supplemental_page_table *src) {
+
+	struct hash_iterator i;
+	hash_first(&i, &src->spt);
+	while (hash_next(&i)) {
+		struct page *src_page = hash_entry(hash_cur(&i), struct page, hash_elem);
+
+		// UNINIT 타입은 복사 불가 → lazy load 로직 필요
+		if (src_page->operations->type == VM_UNINIT) {
+			// 아래처럼 lazy load 상태를 복사
+			bool ok = vm_alloc_page_with_initializer(
+				src_page->uninit.type, src_page->va, src_page->writable,
+				src_page->uninit.init, src_page->uninit.aux);
+			if (!ok) return false;
+		} else {
+			// anon, file-backed 등 실제 데이터 복사
+			if (!vm_alloc_page(page_get_type(src_page), src_page->va, src_page->writable)) {
+				return false;
+			}
+			if (!vm_claim_page(src_page->va)) return false;
+
+			struct page *dst_page = spt_find_page(dst, src_page->va);
+			memcpy(dst_page->frame->kva, src_page->frame->kva, PGSIZE);
+		}
+	}
+	return true;
 }
 
 /* 보조 페이지 테이블이 보유한 자원을 해제합니다. */
@@ -457,3 +522,6 @@ page_destroy(struct hash_elem *e, void *aux UNUSED){
 	struct page *page = hash_entry(e, struct page, hash_elem);
 	vm_dealloc_page(page);
 }
+
+
+

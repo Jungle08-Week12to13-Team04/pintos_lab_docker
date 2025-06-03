@@ -46,21 +46,28 @@ anon_initializer (struct page *page, enum vm_type type, void *kva) { // 페이�
     return true; // 성공적으로 초기화
 }
 
+//[*]3-L_swap 슬롯 없는 경우 zero-fill 처리
+static bool
+anon_swap_in (struct page *page, void *kva) {
+    struct anon_page *anon_page = &page->anon;
 
-static bool//[*]3-L_swap-in: swap 영역에서 메모리로 읽어오는 함수(페이지 폴트 발생시)
-anon_swap_in (struct page *page, void *kva) { // 페이지 fault 발생 시, swap 영역에서 데이터를 읽어오는 함수 (VM 구현 위해 필요)
-    struct anon_page *anon_page = &page->anon; // 페이지에 연결된 anon_page 정보 획득
-    ASSERT(anon_page->swap_slot != BITMAP_ERROR); // 유효한 swap 슬롯이어야 함
+    if (anon_page->swap_slot == BITMAP_ERROR) {
+        // 처음 할당된 anon 페이지 → swap 슬롯 없음 → zero-fill!
+        memset(kva, 0, PGSIZE);
+        return true;
+    }
 
-    lock_acquire(&swap_lock); // 스왑 동시 접근 방지
-    for (int i = 0; i < 8; i++) // 4KB 페이지 = 8개 섹터 (512B)
-        disk_read(swap_disk, anon_page->swap_slot * 8 + i, kva + i * DISK_SECTOR_SIZE); // 섹터 단위로 swap 영역 읽기
-    bitmap_flip(swap_table, anon_page->swap_slot); // 슬롯 비워주기 (free 상태로 표시)
-    lock_release(&swap_lock); // 락 해제
+    // 기존처럼 swap-in (swap 슬롯에서 데이터 읽어오기)
+    lock_acquire(&swap_lock);
+    for (int i = 0; i < 8; i++)
+        disk_read(swap_disk, anon_page->swap_slot * 8 + i, kva + i * DISK_SECTOR_SIZE);
+    bitmap_flip(swap_table, anon_page->swap_slot);
+    lock_release(&swap_lock);
 
-    anon_page->swap_slot = BITMAP_ERROR; // 슬롯 번호 리셋
-    return true; // 성공적으로 swap-in
+    anon_page->swap_slot = BITMAP_ERROR;
+    return true;
 }
+
 
 //[*]3-L_swap-out: 메모리에서 swap 영역으로 내보내는 함수, 한마디로 이빅션.
 static bool

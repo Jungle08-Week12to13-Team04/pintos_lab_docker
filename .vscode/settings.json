@@ -33,6 +33,8 @@
         "tuple": "c",
         "type_traits": "c",
         "utility": "c",
-        "debug.h": "c"
+        "debug.h": "c",
+        "gdt.h": "c",
+        "exception.h": "c"
     }
 }

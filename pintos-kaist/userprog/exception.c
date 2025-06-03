@@ -133,59 +133,84 @@ kill (struct intr_frame *f) {
    project2는 페이지 폴트시 바로 프로세스 죽임
    project3부턴 페이지 폴트시 빈 페이지 찾아줌
     */
+// static void
+// page_fault (struct intr_frame *f) {
+// 	bool not_present;  /* True: not-present page, false: writing r/o page. */
+// 	bool write;        /* True: access was write, false: access was read. */
+// 	bool user;         /* True: access by user, false: access by kernel. */
+// 	void *fault_addr;  /* Fault address. */
+
+// 	/* Obtain faulting address, the virtual address that was
+// 	   accessed to cause the fault.  It may point to code or to
+// 	   data.  It is not necessarily the address of the instruction
+// 	   that caused the fault (that's f->rip). */
+
+// 	fault_addr = (void *) rcr2();
+
+// 	/* Turn interrupts back on (they were only off so that we could
+// 	   be assured of reading CR2 before it changed). */
+// 	intr_enable ();
+
+
+// 	/* Determine cause. */
+// 	/* 
+// 	[*]2-o 여기서 오류 정보 감별 
+// 	1. 참이면 존재하지 않는 페이지에 접근한 경우, 거짓이면 페이지는 있었지만 읽기전용에 쓰기를 한 경우
+// 	2. 참이면 접근이 쓰기였던 경우, 거짓이면 접근이 읽기였던 경우
+// 	3. 참이면 접근 주체가 유저모드, 거짓이면 접근 주체가 커널모드
+// 	*/
+// 	not_present = (f->error_code & PF_P) == 0;
+// 	write = (f->error_code & PF_W) != 0;
+// 	user = (f->error_code & PF_U) != 0;
+	
+// 	if (is_kernel_vaddr(fault_addr)){
+// 		sys_exit(-1);
+// 		return;
+// 	}else if(not_present){
+// 		sys_exit(-1);
+// 		return;
+// 	}
+
+// #ifdef VM
+// 	/* For project 3 and later. */
+// 	if (vm_try_handle_fault (f, fault_addr, user, write, not_present))
+// 		return;
+// #endif
+
+// 	/* Count page faults. */
+// 	page_fault_cnt++;
+
+// 	/* If the fault is true fault, show info and exit. */
+// 	printf ("Page fault at %p: %s error %s page in %s context.\n",
+// 			fault_addr,
+// 			not_present ? "not present" : "rights violation",
+// 			write ? "writing" : "reading",
+// 			user ? "user" : "kernel");
+// 	kill (f);
+// }
+
+//[*]3-L
 static void
 page_fault (struct intr_frame *f) {
-	bool not_present;  /* True: not-present page, false: writing r/o page. */
-	bool write;        /* True: access was write, false: access was read. */
-	bool user;         /* True: access by user, false: access by kernel. */
-	void *fault_addr;  /* Fault address. */
+	printf("[DEBUG] page_fault 진입! f->rip=%p f->rsp=%p\n", f->rip, f->rsp);
+  bool not_present = (f->error_code & PF_P) == 0;
+  bool write = (f->error_code & PF_W) != 0;
+  bool user = (f->error_code & PF_U) != 0;
 
-	/* Obtain faulting address, the virtual address that was
-	   accessed to cause the fault.  It may point to code or to
-	   data.  It is not necessarily the address of the instruction
-	   that caused the fault (that's f->rip). */
+  void *fault_addr = (void *) rcr2 ();
 
-	fault_addr = (void *) rcr2();
+  printf ("[DEBUG] page_fault: fault_addr=%p not_present=%d write=%d user=%d\n",
+          fault_addr, not_present, write, user);
 
-	/* Turn interrupts back on (they were only off so that we could
-	   be assured of reading CR2 before it changed). */
-	intr_enable ();
+  // 기존 코드 유지
+  if (vm_try_handle_fault (f, fault_addr, user, write, not_present))
+    return;
 
+  printf ("[ERROR] Page fault at %p: %s error %s page in %s context.\n",
+          fault_addr,
+          not_present ? "not present" : "rights violation",
+          write ? "writing" : "reading",
+          user ? "user" : "kernel");
 
-	/* Determine cause. */
-	/* 
-	[*]2-o 여기서 오류 정보 감별 
-	1. 참이면 존재하지 않는 페이지에 접근한 경우, 거짓이면 페이지는 있었지만 읽기전용에 쓰기를 한 경우
-	2. 참이면 접근이 쓰기였던 경우, 거짓이면 접근이 읽기였던 경우
-	3. 참이면 접근 주체가 유저모드, 거짓이면 접근 주체가 커널모드
-	*/
-	not_present = (f->error_code & PF_P) == 0;
-	write = (f->error_code & PF_W) != 0;
-	user = (f->error_code & PF_U) != 0;
-	
-	if (is_kernel_vaddr(fault_addr)){
-		sys_exit(-1);
-		return;
-	}else if(not_present){
-		sys_exit(-1);
-		return;
-	}
-
-#ifdef VM
-	/* For project 3 and later. */
-	if (vm_try_handle_fault (f, fault_addr, user, write, not_present))
-		return;
-#endif
-
-	/* Count page faults. */
-	page_fault_cnt++;
-
-	/* If the fault is true fault, show info and exit. */
-	printf ("Page fault at %p: %s error %s page in %s context.\n",
-			fault_addr,
-			not_present ? "not present" : "rights violation",
-			write ? "writing" : "reading",
-			user ? "user" : "kernel");
-	kill (f);
+  kill (f);
 }
-
