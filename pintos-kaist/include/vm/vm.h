@@ -48,7 +48,7 @@ struct page {
 
 	/* Your implementation */
 	struct hash_elem hash_elem; /* [*]3-Q. page 구조체를 SPT 내부의 hash에 연결 */
-
+	bool writable; // 쓰기 가능 여부
 	/* 타입별 데이터는 union 안에 결합되어 있습니다.
 	 * 각 함수는 자동으로 현재 union 타입을 감지합니다. */
 	union {
