@@ -7,6 +7,11 @@ struct page;
 enum vm_type;
 
 struct file_page {
+
+	// [*]3-B. 추가
+	void* padding; 
+	enum vm_type type;
+	struct load_args_tmp *aux;
 };
 
 void vm_file_init (void);

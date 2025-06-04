@@ -1,6 +1,7 @@
 /* file.c: 메모리에 매핑된 파일 객체(mmap된 객체)의 구현 */
 
 #include "vm/vm.h"
+#include "threads/vaddr.h" // [*]3-B. 추가
 
 static bool file_backed_swap_in (struct page *page, void *kva);
 static bool file_backed_swap_out (struct page *page);
@@ -30,7 +31,9 @@ file_backed_initializer (struct page *page, enum vm_type type, void *kva) {
 /* 파일로부터 내용을 읽어 페이지를 swap in 합니다 */
 static bool
 file_backed_swap_in (struct page *page, void *kva) {
-	struct file_page *file_page UNUSED = &page->file;
+	// struct file_page *file_page UNUSED = &page->file;
+	memcpy(kva, page->frame->kva, PGSIZE); // [*]3-B. st 구현 전 임시 작성
+    return true;
 }
 
 /* 페이지의 내용을 파일에 기록(writeback)하여 swap out 합니다 */
