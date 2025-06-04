@@ -5,6 +5,7 @@ struct page;
 enum vm_type;
 
 struct anon_page {
+    size_t swap_slot;  //[*]3-L swap slot 번호 저장
 };
 
 void vm_anon_init (void);
