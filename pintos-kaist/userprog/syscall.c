@@ -48,7 +48,7 @@ int sys_wait(pid_t pid);
 
 // 유저 영역 검증 함수
 void check_address(const void *addr);
-void check_buffer(const void *buffer, unsigned size);
+void check_buffer(void *buffer, unsigned size);
 
 // 내부 함수
 static struct file *find_file_by_fd(int fd);//[*]3-L
@@ -407,20 +407,34 @@ sys_filesize (int fd){
 void check_address(const void *addr) {
   struct thread *t = thread_current();
 
-  if (!is_user_vaddr(addr) || addr == NULL || pml4_get_page(t->pml4, addr) == NULL)
-  {
-      sys_exit(-1);
-  }
+  if (addr == NULL || !is_user_vaddr(addr))
+    sys_exit(-1);
+
+  // 변경된 부분: 예약된 페이지는 허용
+
+  #ifdef VM
+  if (pml4_get_page(t->pml4, addr) == NULL &&
+      spt_find_page(&t->spt, addr) == NULL)
+    sys_exit(-1);
+  #endif
 }
 
-//[*]3-L
-void check_buffer(const void *buffer, unsigned size) {
-  const uint8_t *start = buffer;
-  const uint8_t *end = start + size;
-  for (; start < end; start += PGSIZE) {
-      check_address(start);
-  }
+
+
+// [*]2-B. 버퍼 전체범위 검사
+void check_buffer(void *buffer, unsigned size) {
+    uint8_t *start = buffer;
+    uint8_t *end = (uint8_t *)buffer + size;
+
+    for (; start < end; start += PGSIZE)
+        check_address(start);
+
+    if (size > 0)
+        check_address(end - 1);  // [*]3-Q. 마지막 바이트도 반드시 유효한지 확인
 }
+
+
+
 
 // [*]2-K: 파일을 현재 프로세스의 fdt에 추가
 int

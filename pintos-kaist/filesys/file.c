@@ -48,6 +48,8 @@ file_duplicate (struct file *file) {
 	return nfile;
 }
 
+
+
 /* Closes FILE. */
 void
 file_close (struct file *file) {

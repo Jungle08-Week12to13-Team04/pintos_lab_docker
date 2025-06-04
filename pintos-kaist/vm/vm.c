@@ -8,7 +8,7 @@
 #include "threads/malloc.h"
 #include "vm/vm.h"
 #include "vm/inspect.h"
-#include "vm/file.h"
+#include "filesys/file.h"
 /* 각 서브시스템의 초기화 코드를 호출하여 가상 메모리 서브시스템을 초기화합니다. */
 
 struct disk *swap_disk;//[*]3-L
@@ -325,13 +325,54 @@ supplemental_page_table_copy (struct supplemental_page_table *dst UNUSED,
         bool writable = src_page->writable;
 
         /* 1) type이 uninit이면 */
-        if (type == VM_UNINIT)
-        { // uninit page 생성 & 초기화
-            vm_initializer *init = src_page->uninit.init;
-            void *aux = src_page->uninit.aux;
-            vm_alloc_page_with_initializer(VM_ANON, upage, writable, init, aux);
-            continue;
-        }
+        // if (type == VM_UNINIT)
+        // { // uninit page 생성 & 초기화
+        //     vm_initializer *init = src_page->uninit.init;
+        //     void *src_aux = src_page->uninit.aux;
+
+		// 	struct lazy_load_arg *src_lazy = (struct lazy_load_arg *)src_aux;
+		// 	struct lazy_load_arg *copy_aux = malloc(sizeof(struct lazy_load_arg));
+		// 	if (copy_aux == NULL) return false;
+
+		// 	memcpy(copy_aux, src_lazy, sizeof(struct lazy_load_arg));
+
+        //     // vm_alloc_page_with_initializer(VM_ANON, upage, writable, init, aux);
+
+		// 	copy_aux->file = file_reopen(src_lazy->file);
+
+		// 	if (copy_aux->file == NULL) {
+		// 		free(copy_aux);
+		// 		return false;
+		// 	}
+
+        //     continue;
+        // }
+
+		if (type == VM_UNINIT)
+	{
+		vm_initializer *init = src_page->uninit.init;
+		void *src_aux = src_page->uninit.aux;
+
+		struct lazy_load_arg *src_lazy = (struct lazy_load_arg *)src_aux;
+		struct lazy_load_arg *copy_aux = malloc(sizeof(struct lazy_load_arg));
+		if (copy_aux == NULL) return false;
+
+		copy_aux->ofs = src_lazy->ofs;
+		copy_aux->read_bytes = src_lazy->read_bytes;
+		copy_aux->zero_bytes = src_lazy->zero_bytes;
+
+		copy_aux->file = file_reopen(src_lazy->file);
+		if (copy_aux->file == NULL) {
+			free(copy_aux);
+			return false;
+		}
+
+		if (!vm_alloc_page_with_initializer(VM_ANON, upage, writable, init, copy_aux))
+			return false;
+
+		continue;
+	}
+
 
         /* 2) type이 uninit이 아니면 */
         if (!vm_alloc_page(type, upage, writable)) // uninit page 생성 & 초기화

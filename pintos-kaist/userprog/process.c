@@ -82,6 +82,9 @@ initd(void *f_name)
 	NOT_REACHED();
 }
 
+
+
+
 // [*]3-B.
 struct fork_info {
 	struct thread *parent;
@@ -99,6 +102,8 @@ tid_t process_fork(const char *name, struct intr_frame *if_ UNUSED)
 
 	//[*]3-B. 
 	struct fork_info *args = palloc_get_page(0);
+	if (args == NULL)
+		return TID_ERROR;
 	args->parent = thread_current();
 	memcpy(&args->parent_tf, &if_, sizeof(struct intr_frame));
 
@@ -106,6 +111,7 @@ tid_t process_fork(const char *name, struct intr_frame *if_ UNUSED)
 	tid_t tid = thread_create(name, PRI_DEFAULT, __do_fork, args);	//[*]3-B. if_->args
 	if (tid == TID_ERROR)
 	{
+		palloc_free_page(args);
 		return TID_ERROR;
 	}
 
@@ -222,6 +228,15 @@ __do_fork(void *aux)
 	struct intr_frame *parent_tf = args->parent_tf;
 	struct thread *cur = thread_current();
 
+
+	// [*]3-Q. fd_table 복사 전 명시적 초기화 실행!! -> 중요!
+	// fd_table 초기화 및 할당을 하지 않은 채 fd_table에 값을 대입하려 했기에 예외 동작 발생.
+	cur->fd_table = palloc_get_multiple(PAL_ZERO, FDT_PAGES);
+	if (cur->fd_table == NULL)
+		goto error;
+
+	cur->next_fd = 2; 
+
 	memcpy(&cur->tf, parent_tf, sizeof(struct intr_frame));
 	palloc_free_page(args);  // 메모리 해제
 
@@ -258,9 +273,8 @@ __do_fork(void *aux)
 	// 힌트: 부모의 열려있는 파일들을 복제할 때는 file_duplicate()를 사용하라.
 
 	
-
-	for (int i = 2; i < OPEN_LIMIT; i++){
-
+	// [*]3-Q
+	for (int i = 2; i < OPEN_LIMIT; i++) {
 		struct file *parent_file = cur->parent->fd_table[i];
 		if (parent_file != NULL){
 			struct file *child_file = file_duplicate(parent_file);
