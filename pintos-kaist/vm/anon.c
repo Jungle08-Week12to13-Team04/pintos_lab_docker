@@ -2,7 +2,7 @@
 
 #include "vm/vm.h"
 #include "devices/disk.h"
-#include "threads/vaddr.h"
+#include "threads/vaddr.h" //// [*]3-B. 추가
 
 /* 아래 줄은 수정하지 마십시오 */
 static struct disk *swap_disk;

@@ -82,6 +82,13 @@ initd(void *f_name)
 	NOT_REACHED();
 }
 
+// [*]3-B.
+struct fork_info {
+	struct thread *parent;
+	struct intr_frame *parent_tf;
+};
+
+
 /* Clones the current process as `name`. Returns the new process's thread id, or
  * TID_ERROR if the thread cannot be created. */
 // [*]2-B. fork 구현
@@ -89,7 +96,14 @@ tid_t process_fork(const char *name, struct intr_frame *if_ UNUSED)
 {
 	struct thread *cur = thread_current(); // 현재 부모 스레드
 	struct thread *real_child;
-	tid_t tid = thread_create(name, PRI_DEFAULT, __do_fork, if_);
+
+	//[*]3-B. 
+	struct fork_info *args = palloc_get_page(0);
+	args->parent = thread_current();
+	memcpy(&args->parent_tf, &if_, sizeof(struct intr_frame));
+
+
+	tid_t tid = thread_create(name, PRI_DEFAULT, __do_fork, args);	//[*]3-B. if_->args
 	if (tid == TID_ERROR)
 	{
 		return TID_ERROR;
@@ -198,11 +212,19 @@ __do_fork(void *aux)
 	// /* 1. Read the cpu context to local stack. */
 	// [*]2-o 1. 부모의 실행 흐름을 이어가기 위한 callee-saved reg
 
-	struct intr_frame *parent_tf = (struct intr_frame*) aux;
+	// struct intr_frame *parent_tf = (struct intr_frame*) aux;
+	// struct thread *cur = thread_current();
+	// struct thread *parent = (struct thread *)aux; // [*]3-B. 추가
+	// memcpy(&cur->tf, parent_tf, sizeof(struct intr_frame));
+
+	struct fork_info *args = (struct fork_info *)aux;
+	struct thread *parent = args->parent;
+	struct intr_frame *parent_tf = args->parent_tf;
 	struct thread *cur = thread_current();
-	struct thread *parent = (struct thread *)aux; // [*]3-B. 추가
 
 	memcpy(&cur->tf, parent_tf, sizeof(struct intr_frame));
+	palloc_free_page(args);  // 메모리 해제
+
 
 	// void *memcpy(void *dest, const void *src, size_t n)
 	// src 주소로부터 n바이트를 읽어서 dest 주소로 복사한다.
@@ -308,6 +330,12 @@ int process_exec(void *f_name)
     int count = 0;
     for (token = strtok_r(file_name, " ", &save_ptr); token != NULL; token = strtok_r(NULL, " ", &save_ptr))
         parse[count++] = token;
+
+	
+	// [*]3-B. destroy에서 해제된 buckets >> init ??
+	#ifdef VM
+		supplemental_page_table_init (&thread_current ()->spt);
+	#endif
 
 	/* And then load the binary */
 	success = load(file_name, &_if);
