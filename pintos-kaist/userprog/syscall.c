@@ -392,22 +392,17 @@ void check_address(void *addr) {
     sys_exit(-1);
 
   // 변경된 부분: 예약된 페이지는 허용
+
+  #ifdef VM
   if (pml4_get_page(t->pml4, addr) == NULL &&
       spt_find_page(&t->spt, addr) == NULL)
     sys_exit(-1);
+  #endif
 }
 
 
 
 // [*]2-B. 버퍼 전체범위 검사
-// void check_buffer(void *buffer, unsigned size) {
-//     uint8_t *start = buffer;
-//     uint8_t *end = start + size;
-//     for (; start < end; start += PGSIZE) {
-//         check_address(start);
-//     }
-// }
-// [*]3-Q.
 void check_buffer(void *buffer, unsigned size) {
     uint8_t *start = buffer;
     uint8_t *end = (uint8_t *)buffer + size;
@@ -416,7 +411,7 @@ void check_buffer(void *buffer, unsigned size) {
         check_address(start);
 
     if (size > 0)
-        check_address(end - 1);  // 마지막 바이트도 반드시 유효한지 확인
+        check_address(end - 1);  // [*]3-Q. 마지막 바이트도 반드시 유효한지 확인
 }
 
 

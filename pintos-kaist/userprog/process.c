@@ -228,6 +228,9 @@ __do_fork(void *aux)
 	struct intr_frame *parent_tf = args->parent_tf;
 	struct thread *cur = thread_current();
 
+
+	// [*]3-Q. fd_table 복사 전 명시적 초기화 실행!! -> 중요!
+	// fd_table 초기화 및 할당을 하지 않은 채 fd_table에 값을 대입하려 했기에 예외 동작 발생.
 	cur->fd_table = palloc_get_multiple(PAL_ZERO, FDT_PAGES);
 	if (cur->fd_table == NULL)
 		goto error;
@@ -270,15 +273,12 @@ __do_fork(void *aux)
 	// 힌트: 부모의 열려있는 파일들을 복제할 때는 file_duplicate()를 사용하라.
 
 	
-
-	for (int i = 2; i < OPEN_LIMIT; i++){
-
+	// [*]3-Q
+	for (int i = 2; i < OPEN_LIMIT; i++) {
 		struct file *parent_file = cur->parent->fd_table[i];
 		if (parent_file != NULL){
 			struct file *child_file = file_duplicate(parent_file);
 			if (child_file == NULL){
-			    printf("file_duplicate failed at fd %d\n", i);
-
 				// 부모의 파일 중 하나라도 복제 실패하면 프로세스 복제 실패로 간주,
 				succ = false;
 				printf("out of memory during file_duplicate at %d\n", i);
