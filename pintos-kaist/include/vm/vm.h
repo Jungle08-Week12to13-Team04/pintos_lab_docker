@@ -66,9 +66,13 @@ struct page {
 
 /* "프레임"을 나타내는 구조체 */
 struct frame {
-	void *kva;
-	struct page *page;
+    void *kva; // 프레임의 커널 가상주소
+    struct page *page; // 연결된 유저 페이지
+    struct list_elem elem; // frame_table에서 연결될 list 요소
+    bool pinned; // 교체 보호 여부
 };
+
+
 
 /* 페이지 연산을 위한 함수 테이블입니다.
  * 이는 C에서 "인터페이스"를 구현하는 한 가지 방법입니다.

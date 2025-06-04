@@ -9,30 +9,49 @@
 #include "userprog/gdt.h"
 #include "threads/flags.h"
 #include "intrinsic.h"
-typedef int pid_t;
 #include "threads/palloc.h"
 #include <string.h>
+#include <stdlib.h> // malloc, free
 #include "userprog/process.h"
+#include "vm/file.h"  // do_mmap, do_munmap 선언 위해
+#include <stddef.h>  // size_t
 
+
+typedef int pid_t;
+
+// 외부 함수 선언 (암시적 선언 오류 방지)
+void power_off(void);
+int input_getc(void);
+int add_file_to_fdt(struct file *file);
+
+// syscall 인터페이스
 void syscall_entry(void);
 void syscall_handler(struct intr_frame *f);
-void sys_halt (void);
-void sys_exit (int status);
+
+// syscall 구현부
+void sys_halt(void);
+void sys_exit(int status);
 int sys_write(int fd, const void *buffer, unsigned size);
-int sys_exec (const char *cmd_line);
+int sys_exec(const char *cmd_line);
 int sys_open(const char *file);
 void sys_close(int fd);
-bool sys_create (const char *file, unsigned initial_size);
-bool sys_remove (const char *file);
-int sys_filesize (int fd);
-int sys_read (int fd, void *buffer, unsigned size);
-void sys_seek (int fd, unsigned position);
-unsigned sys_tell (int fd);
-void check_address(void *addr);
+bool sys_create(const char *file, unsigned initial_size);
+bool sys_remove(const char *file);
+int sys_filesize(int fd);
+int sys_read(int fd, void *buffer, unsigned size);
+void sys_seek(int fd, unsigned position);
+unsigned sys_tell(int fd);
+void *sys_mmap(void *addr, size_t length, int writable, int fd, off_t offset);
+void sys_munmap(void *addr);
 pid_t sys_fork(const char *thread_name, struct intr_frame *fff);
-static struct file *find_file_by_fd(int fd);
 int sys_wait(pid_t pid);
-void check_buffer(void *buffer, unsigned size);
+
+// 유저 영역 검증 함수
+void check_address(const void *addr);
+void check_buffer(const void *buffer, unsigned size);
+
+// 내부 함수
+static struct file *find_file_by_fd(int fd);//[*]3-L
 
 /*
 이 파일에서 프로세스 생성과 실행을 관리한다
@@ -92,42 +111,52 @@ syscall_handler (struct intr_frame *f UNUSED) {
     sys_exit(f->R.rdi);
     break;
   case SYS_WRITE:
-    f->R.rax = sys_write(f->R.rdi, f->R.rsi, f->R.rdx);
+    f->R.rax = sys_write((int)f->R.rdi, (const void *)f->R.rsi, (unsigned)f->R.rdx);
     break;
   case SYS_EXEC:
-    if (sys_exec(f->R.rdi) == -1) {
+    if (sys_exec((const char *)f->R.rdi) == -1) {
       sys_exit(-1);
-      }
+    }
     break;
   case SYS_FORK:
-    f->R.rax = sys_fork(f->R.rdi, f);
+    f->R.rax = sys_fork((const char *)f->R.rdi, f);
     break;
   case SYS_OPEN:
-    f->R.rax = sys_open(f->R.rdi);
+    f->R.rax = sys_open((const char *)f->R.rdi);
     break;
   case SYS_CLOSE:
-    sys_close(f->R.rdi);
+    sys_close((int)f->R.rdi);
     break;
   case SYS_CREATE:
-    f->R.rax = sys_create(f->R.rdi, f->R.rsi);
+    f->R.rax = sys_create((const char *)f->R.rdi, (unsigned)f->R.rsi);
     break;
   case SYS_READ:
-    f->R.rax = sys_read(f->R.rdi, f->R.rsi, f->R.rdx);
+    f->R.rax = sys_read((int)f->R.rdi, (void *)f->R.rsi, (unsigned)f->R.rdx);
     break;
   case SYS_REMOVE:
-    f->R.rax = sys_remove(f->R.rdi);
+    f->R.rax = sys_remove((const char *)f->R.rdi);
     break;
   case SYS_SEEK:
-    sys_seek(f->R.rdi, f->R.rsi);
+    sys_seek((int)f->R.rdi, (unsigned)f->R.rsi);
     break;
   case SYS_TELL:
-    f->R.rax = sys_tell(f->R.rdi);
+    f->R.rax = sys_tell((int)f->R.rdi);
     break;
   case SYS_FILESIZE:
-    f->R.rax = sys_filesize(f->R.rdi);
+    f->R.rax = sys_filesize((int)f->R.rdi);
     break;
   case SYS_WAIT:
-    f->R.rax = sys_wait(f->R.rdi);
+    f->R.rax = sys_wait((pid_t)f->R.rdi);
+    break;
+
+  //[*]3-L
+  case SYS_MMAP:
+    f->R.rax = (uint64_t)sys_mmap((void *)f->R.rdi, (size_t)f->R.rsi, (int)f->R.rdx, (int)f->R.r10, (off_t)f->R.r8);
+    break;
+  
+  //[*]3-L
+  case SYS_MUNMAP:
+    sys_munmap((void *)f->R.rdi);
     break;
   default:
     thread_exit ();
@@ -155,17 +184,13 @@ sys_exit(int status) {
 // // [*]2-K : 커널 write
 int
 sys_write(int fd, const void *buffer, unsigned size) {
-  // check_address(buffer);
-
   check_buffer(buffer, size);
   struct file *file = find_file_by_fd(fd);
   int bytes_written = 0;
-  // 파일이 없거나, 표준입력인 경우 -1 리턴
+
   if (file == NULL && fd == 0)
     return -1;
-  // 표준출력인 경우 콘솔에 출력
-  if (fd == 1)
-  {
+  if (fd == 1) {
     putbuf(buffer, size);
     bytes_written = size;
   } else {
@@ -173,8 +198,11 @@ sys_write(int fd, const void *buffer, unsigned size) {
     bytes_written = file_write(file, buffer, size);
     lock_release(&filesys_lock);
     return bytes_written;
-  }  
+  }
+
+  return bytes_written; // 혹은 return 0;
 }
+
 
 // [*]2-K 커널 fork
 pid_t sys_fork(const char *thread_name, struct intr_frame *fff){
@@ -248,7 +276,7 @@ sys_close(int fd){
     lock_release(&filesys_lock);
 }
 
-
+//[*]3-L process.c와의 씽크를 위
 int sys_wait(pid_t pid){
   return process_wait(pid);
 }
@@ -354,10 +382,12 @@ unsigned sys_tell (int fd){
   struct file *file = find_file_by_fd(fd);
 
   check_address(file);
-  if (fd < 2 || fd >= OPEN_LIMIT || file == NULL) return;
+  if (fd < 2 || fd >= OPEN_LIMIT || file == NULL)
+    return 0; // 누락된 return 추가
 
   return file_tell(file);
 }
+
 
 // [*]2-K 커널 filesize, fd 파일 길이 반환
 int 
@@ -373,9 +403,8 @@ sys_filesize (int fd){
   return length;
 }
 
-// [*]2-K 유저 영역에서 커널 영역 침범하지 않았는지 확인
-void 
-check_address(void *addr) {
+//[*]3-L
+void check_address(const void *addr) {
   struct thread *t = thread_current();
 
   if (!is_user_vaddr(addr) || addr == NULL || pml4_get_page(t->pml4, addr) == NULL)
@@ -384,13 +413,13 @@ check_address(void *addr) {
   }
 }
 
-// [*]2-B. 버퍼 전체범위 검사
-void check_buffer(void *buffer, unsigned size) {
-    uint8_t *start = buffer;
-    uint8_t *end = start + size;
-    for (; start < end; start += PGSIZE) {
-        check_address(start);
-    }
+//[*]3-L
+void check_buffer(const void *buffer, unsigned size) {
+  const uint8_t *start = buffer;
+  const uint8_t *end = start + size;
+  for (; start < end; start += PGSIZE) {
+      check_address(start);
+  }
 }
 
 // [*]2-K: 파일을 현재 프로세스의 fdt에 추가
@@ -415,4 +444,35 @@ static struct file *find_file_by_fd(int fd)
         return NULL;
 
     return cur->fd_table[fd];
+}
+
+
+
+void *//[*]3-L
+sys_mmap(void *addr, size_t length, int writable, int fd, off_t offset) {
+  // [중요!] mmap은 fd가 0/1 (stdin, stdout)이면 실패해야 함
+  if (fd == 0 || fd == 1 || length == 0 || addr == NULL || pg_ofs(addr) != 0)
+    return NULL;
+
+  struct file *file = find_file_by_fd(fd);
+  if (file == NULL)
+    return NULL;
+
+  // 파일 길이가 0이면 실패
+  if (file_length(file) == 0)
+    return NULL;
+
+  void *ret = do_mmap(addr, length, writable, file, offset);
+  if (ret == NULL)
+    return NULL;
+
+  return ret;
+}
+
+void//[*]3-L
+sys_munmap(void *addr) {
+  if (addr == NULL || pg_ofs(addr) != 0)
+    return;
+
+  do_munmap(addr);
 }

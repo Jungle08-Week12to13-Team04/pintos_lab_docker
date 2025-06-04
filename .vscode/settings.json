@@ -24,14 +24,19 @@
         "list.h": "c",
         "malloc.h": "c",
         "syn-read.h": "c",
-        "unordered_map": "c",
-        "vector": "c",
-        "memory": "c",
-        "optional": "c",
-        "string_view": "c",
-        "system_error": "c",
         "page_cache.h": "c",
-        "vm.h": "c",
-        "hash.h": "c"
+        "array": "c",
+        "chrono": "c",
+        "istream": "c",
+        "ostream": "c",
+        "ratio": "c",
+        "tuple": "c",
+        "type_traits": "c",
+        "utility": "c",
+        "debug.h": "c",
+        "gdt.h": "c",
+        "exception.h": "c",
+        "inspect.h": "c",
+        "round.h": "c"
     }
 }

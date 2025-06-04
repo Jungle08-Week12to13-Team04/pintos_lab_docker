@@ -41,7 +41,8 @@ void cond_wait(struct condition *, struct lock *);
 void cond_signal(struct condition *, struct lock *);
 void cond_broadcast(struct condition *, struct lock *);
 
-bool sema_compare_priority(struct list_elem *, struct list_elem *, void *); //[*]1-2-2.
+bool sema_compare_priority(const struct list_elem *, const struct list_elem *, void *);
+ //[*]1-2-2.
 
 /* Optimization barrier.
  *
