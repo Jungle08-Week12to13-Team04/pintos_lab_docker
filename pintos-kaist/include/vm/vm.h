@@ -19,7 +19,7 @@ enum vm_type {
 	/* 추가 정보를 저장하기 위한 보조 비트 플래그 마커입니다.
  	 * 값이 int 안에 들어가기만 한다면, 더 많은 마커를 추가할 수 있습니다. */
 	VM_MARKER_0 = (1 << 3),
-	VM_STACK = (1 << 3), //[*]3-B. 추가
+	// VM_STACK = (1 << 3), //[*]3-B. 추가
 	VM_MARKER_1 = (1 << 4),
 
 	/* 이 값을 초과하지 마십시오. */
@@ -49,8 +49,8 @@ struct page {
 
 	/* Your implementation */
 	struct hash_elem hash_elem; // [*]3-B. hash 연결 list_elem
-	int writable; // [*]3-B. writable 필드 추가
-	enum vm_type vm_type;
+	int writable; // [*]3-B. writable 필드
+	enum vm_type vm_type; // [*]3-B. 페이지 타입
 
 	/* 타입별 데이터는 union 안에 결합되어 있습니다.
 	 * 각 함수는 자동으로 현재 union 타입을 감지합니다. */
@@ -123,7 +123,7 @@ void vm_dealloc_page (struct page *page);
 bool vm_claim_page (void *va);
 enum vm_type page_get_type (struct page *page);
 
-//[*]3-B. 추가
+// [*]3-B. 추가
 unsigned page_hash(const struct hash_elem *p_, void *aux UNUSED);
 bool page_less(const struct hash_elem *a_, const struct hash_elem *b_, void *aux);
 

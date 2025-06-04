@@ -75,8 +75,12 @@ syscall_init (void) {
 // [*]2-K : 기본 함수에 시스템콜 넘버에 따른 분기 추가
 void
 syscall_handler (struct intr_frame *f UNUSED) {
-  // TODO: Your implementation goes here.
+
+  // [*]3-B. 추가
+  #ifdef VM
   thread_current()->save_rsp = f->rsp;
+  #endif
+
   /* rax = 시스템 콜 넘버 */
   int syscall_n = f->R.rax; /* 시스템 콜 넘버 */
   switch (syscall_n)

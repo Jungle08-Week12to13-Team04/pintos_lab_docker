@@ -31,16 +31,14 @@ anon_initializer (struct page *page, enum vm_type type, void *kva) {
 	/* 핸들러를 설정합니다 */
 	page->operations = &anon_ops;
 	struct anon_page *anon_page = &page->anon;
-
-	// 초기화할 필드가 더 생기면 여기 추가
-    return true;  //[*]3-B. !!
+    return true; // [*]3-B. 추가
 }
 
 /* swap 디스크로부터 내용을 읽어 페이지를 swap in 합니다 */
 static bool
 anon_swap_in (struct page *page, void *kva) {
 	// struct anon_page *anon_page = &page->anon;
-	memcpy(kva, page->frame->kva, PGSIZE); //[*]3-B. !!
+	memcpy(kva, page->frame->kva, PGSIZE); // [*]3-B. st 구현 전 임시 작성
     return true;
 }
 

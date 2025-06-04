@@ -31,6 +31,7 @@
         "string_view": "c",
         "system_error": "c",
         "page_cache.h": "c",
-        "vm.h": "c"
+        "vm.h": "c",
+        "hash.h": "c"
     }
 }

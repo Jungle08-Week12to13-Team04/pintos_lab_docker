@@ -30,7 +30,6 @@ static void process_cleanup(void);
 static bool load(const char *file_name, struct intr_frame *if_);
 static void initd(void *f_name);
 static void __do_fork(void *);
-// static bool push_stack_fr(struct intr_frame *if_); //[*]3-B. !!
 
 /* General process initializer for initd and other process. */
 static void
@@ -57,7 +56,7 @@ tid_t process_create_initd(const char *file_name)
 	strlcpy(fn_copy, file_name, PGSIZE);
 
 	char *save_ptr;
-	strtok_r(file_name, " ", &save_ptr); //[*]3-B. !!
+	strtok_r(file_name, " ", &save_ptr); //[*]3-B. 추가
 
 	// file_name ="args-single onearg"
 	char *prog_name = strtok_r(file_name, " ", &save_ptr);
@@ -295,7 +294,7 @@ int process_exec(void *f_name)
 	// 기존 환경을 청소하는 작업.
 	process_cleanup();
 
-	// /* [*]
+	//
 	// for implement argument passing
 	// before load,
 	// 스택 프레임에 프로그램 실행을 위한 정보들(인자 문자열, argv 배열, argc, fake return address 등)을
@@ -303,53 +302,7 @@ int process_exec(void *f_name)
 
 	// 유저 애플리케이션은 인자 전달을 위해 %rdi, %rsi, %rdx, %rcx, %r8, %r9 순서로 정수 레지스터를 사용함.
 
-
-	// 공백을 기준으로 문자열을 나눠서,
-	// 첫 번째 단어는 프로그램 이름
-	// 두번째 단어부터 첫번째 인자로 처리되도록 구현
-	// */
-	// //
-
-	// int argc = 0;
-	// char *argv[ARGUMENT_LIMIT];
-	// char *token, *save_ptr;
-
-	// // 현재 file_name = "args-single onearg"
-
-	// token = strtok_r(file_name, " ", &save_ptr);
-	// // 모든 토큰을 처리
-	// while (token != NULL && argc < ARGUMENT_LIMIT)
-	// {
-	// 	// 현재 토큰을 argv 배열에 저장
-	// 	argv[argc] = token;
-	// 	argc++;
-
-	// 	// 다음 토큰 가져오기
-	// 	token = strtok_r(NULL, " ", &save_ptr);
-	// }
-
-	// if (argc < ARGUMENT_LIMIT)
-	// {
-	// 	argv[argc] = NULL;
-	// }
-
-	// /*
-	// 파싱 후
-	// argc = 2
-
-	// argv[0] = "args-single"
-	// argv[1] = "onearg"
-	// argv[2] = NULL
-	// */
-
-	// // memcpy(file_name, argv[0], sizeof(argv[0])+ 1);
-	// strlcpy(file_name, argv[0], PGSIZE); // [*]3-B. 수정
-
-	// // 레지스터에 main함수에서 쓰이는 첫번째 인자와 두번째 인자 전달.
-	// _if.R.rdi = argc;
-	// _if.R.rsi = (uint64_t)argv; // 주소값을 정수로 전달할 때, uint64_t를 사용.
-
-	//[*]3-B. !!
+	//[*]3-B. argument passing 수정
     char *parse[64];
     char *token, *save_ptr;
     int count = 0;
@@ -359,12 +312,7 @@ int process_exec(void *f_name)
 	/* And then load the binary */
 	success = load(file_name, &_if);
 
-	// push_stack_fr(&_if);
-	// 레지스터에 main함수에서 쓰이는 첫번째 인자와 두번째 인자 전달.
-	// 주소값을 정수로 전달할 때, uint64_t를 사용.
-	// hex_dump(_if.rsp, _if.rsp, USER_STACK - (uint64_t)_if.rsp, true);
-
-	//[*]3-B. !!
+	//[*]3-B. argument passing 수정
 	argument_stack(parse, count, &_if.rsp); // 함수 내부에서 parse와 rsp의 값을 직접 변경하기 위해 주소 전달
     _if.R.rdi = count;
     _if.R.rsi = (char *)_if.rsp + 8;
@@ -753,49 +701,7 @@ validate_segment(const struct Phdr *phdr, struct file *file)
 	return true;
 }
 
-// // [*]2-O 스택 프레임 구성용 함수
-// static bool push_stack_fr(struct intr_frame *if_)
-// {
-// 	char **argv = (char **)if_->R.rsi;
-// 	int argc = if_->R.rdi;
-// 	// 스택에 저장된 문자열의 주소를 저장 추후 프레임에 추가
-// 	char *addrs_argv[argc];
-
-// 	// argv 문자열 먼저 푸쉬
-// 	for (int i = argc - 1; i >= 0; i--)
-// 	{
-// 		size_t len = strlen(argv[i]) + 1; // 널 종단문자 포함
-// 		if_->rsp -= len;
-// 		if ((uint64_t)if_->rsp < STACK_LIMIT)
-// 			return false;
-// 		memcpy(if_->rsp, argv[i], len);
-// 		addrs_argv[i] = if_->rsp;
-// 	}
-
-// 	// 정렬용 패딩
-// 	if_->rsp = (uint64_t)if_->rsp & ~0x7;
-
-// 	// 문자열 시작주소 푸쉬
-// 	// 마지막 문자열 표시
-// 	if_->rsp -= sizeof(uintptr_t);
-// 	memset(if_->rsp, 0, sizeof(uintptr_t));
-
-// 	for (int i = argc - 1; i >= 0; i--)
-// 	{
-// 		if_->rsp -= sizeof(uintptr_t);
-// 		memcpy(if_->rsp, &addrs_argv[i], sizeof(uintptr_t));
-// 	}
-
-// 	if_->R.rsi = if_->rsp;
-// 	// 규약상 필요한 주소에 가짜주소 채워넣기
-// 	if_->rsp -= sizeof(uintptr_t);
-// 	memset(if_->rsp, 0, sizeof(uintptr_t));
-
-// 	return true;
-// }
-
-
-//[*]3-B. argument passing stack 구성용 함수 변경
+// [*]3-B. argument passing stack 구성용 함수 재 작성
 void argument_stack(char **parse, int count, void **rsp) // 주소를 전달받았으므로 이중 포인터 사용
 {
     // 프로그램 이름, 인자 문자열 push

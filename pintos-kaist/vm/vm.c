@@ -1,8 +1,10 @@
 /* vm.c: 가상 메모리 객체를 위한 일반적인 인터페이스. */
 
-#include "lib/kernel/hash.h" // [*]3-B
-#include "threads/thread.h" // [*]3-B
-#include "threads/vaddr.h" // [*]3-B
+// [*]3-B. 추가
+#include "lib/kernel/hash.h" 
+#include "threads/thread.h"
+#include "threads/vaddr.h" 
+
 #include "threads/malloc.h"
 #include "vm/vm.h"
 #include "vm/inspect.h"
@@ -60,7 +62,7 @@ vm_alloc_page_with_initializer (enum vm_type type, void *upage, bool writable,
 		/* TODO: 페이지를 spt에 삽입합니다. */
  
 
-		//[*]3-B. 페이지 생성 후 초기화, 필드 수정 후 spt에 삽입
+		// [*]3-B. 페이지 생성 후 초기화, 필드 수정 후 spt에 삽입
 		
 		struct page* page = (struct page*)malloc(sizeof(struct page));
 		ASSERT(page);
@@ -96,14 +98,7 @@ spt_find_page (struct supplemental_page_table *spt UNUSED, void *va UNUSED) {
 	struct page *page = NULL; // 나중에 사용할 임시 struct page 포인터 선언
 	/* TODO: Fill this function. */
 
-	//[*]3-B. spt에서 주어진 가상 주소 va에 해당하는 페이지 정보 찾기
-	// page = malloc(sizeof(struct page)); // 해시 테이블에서 찾기 위해 사용할 임시 키 객체를 동적으로 생성
-    // struct hash_elem *e;
-    // page->va = va;
-    // e = hash_find(&spt, &page->hash_elem); // spt->hash에서 page의 va를 키로 사용해 해당 hash_elem을 찾음
-    // return e != NULL ? hash_entry(e, struct page, hash_elem) : NULL; // e가 존재하면 hash_entry()를 통해 struct page 포인터로 다시 변환
-
-	//[*]3-B. !!
+	// [*]3-B. spt에서 주어진 가상 주소 va에 해당하는 페이지 정보 찾기
 	struct page temp;
 	temp.va = pg_round_down(va);  // 페이지 정렬
 	struct hash_elem *e = hash_find(&spt->spt_hash, &temp.hash_elem);
@@ -119,7 +114,7 @@ spt_insert_page (struct supplemental_page_table *spt UNUSED,
 	int succ = false;
 	/* TODO: Fill this function. */
 	
-	//[*]3-B. spt에 page를 삽입하는데, 가상주소가 spt에 존재하지 않을 경우에만 삽입
+	// [*]3-B. spt에 page를 삽입하는데, 가상주소가 spt에 존재하지 않을 경우에만 삽입
 	return hash_insert(&spt->spt_hash, &page->hash_elem) == NULL ? true : false;
 	
 	// return succ;
@@ -171,7 +166,7 @@ vm_get_frame (void) {
 	return frame;
 }
 
-// [*]3-B. !!
+// [*]3-B. 스택 확장 함수
 /* 스택을 확장하는 작업. */
 static void
 vm_stack_growth (void *addr UNUSED) {
@@ -180,7 +175,7 @@ vm_stack_growth (void *addr UNUSED) {
 
 	while(1){
 		if(!spt_find_page(&thread_current()->spt,addr)){
-			if (vm_alloc_page(VM_ANON | VM_STACK, addr, true)){
+			if (vm_alloc_page(VM_ANON | VM_MARKER_0, addr, true)){
 				vm_claim_page(addr);
 				memset(addr, 0, PGSIZE);
 			}
@@ -246,7 +241,7 @@ vm_claim_page (void *va UNUSED) {
 	struct page *page = NULL;
 	/* TODO: Fill this function */
 
-    //[*]3-B. spt에서 va에 해당하는 page 찾기
+    // [*]3-B. spt에서 va에 해당하는 page 찾기
     page = spt_find_page(&thread_current()->spt, va);
     if (page == NULL)
         return false;

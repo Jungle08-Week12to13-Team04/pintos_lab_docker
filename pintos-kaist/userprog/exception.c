@@ -163,25 +163,19 @@ page_fault (struct intr_frame *f) {
 	write = (f->error_code & PF_W) != 0;
 	user = (f->error_code & PF_U) != 0;
 
+	//[*]3-B. 커널 주소로 접근 시 바로 종료
 	if (is_kernel_vaddr(fault_addr)){
 		sys_exit(-1);
 		return;
 	}
-	//[*]3-B. 변경	
-	// else if(not_present){
-	// 	sys_exit(-1);
-	// 	return;
-	// }
 
 #ifdef VM
 	/* For project 3 and later. */
 
-	//[*]3-B. 변경	
 	if (vm_try_handle_fault(f, fault_addr, user, write, not_present))
 		return;
 
 #endif
-	
 	sys_exit(-1);
 
 	/* Count page faults. */

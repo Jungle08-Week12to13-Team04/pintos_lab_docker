@@ -23,11 +23,6 @@ enum thread_status
    You can redefine this to whatever type you like. */
 typedef int tid_t;
 
-//[*]3-B. 아래로 내려 줌
-// #ifdef VM
-// #include "vm/vm.h"
-// #endif
-
 #define TID_ERROR ((tid_t) - 1) /* Error value for tid_t. */
 
 /* Thread priorities. */
