@@ -286,7 +286,7 @@ void cond_init(struct condition *cond)
 }
 
 // [*]1-2-2. semaphore_elem 받았을 때 정렬 삽입 시 이용하는 함수
-bool sema_compare_priority(struct list_elem *a, struct list_elem *b, void *aux)
+bool sema_compare_priority(const struct list_elem *a, const struct list_elem *b, void *aux)
 {
 	struct semaphore_elem *l_sema = list_entry(a, struct semaphore_elem, elem);
 	struct semaphore_elem *s_sema = list_entry(b, struct semaphore_elem, elem);

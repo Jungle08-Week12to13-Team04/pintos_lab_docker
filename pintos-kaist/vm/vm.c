@@ -11,17 +11,29 @@
 #include "filesys/file.h"
 /* 각 서브시스템의 초기화 코드를 호출하여 가상 메모리 서브시스템을 초기화합니다. */
 
+struct disk *swap_disk;//[*]3-L
+struct bitmap *swap_table;//[*]3-L
+struct lock swap_lock;//[*]3-L
+
+// 전역 Frame Table 리스트
+struct list frame_table;
+// Frame Table 락 (concurrent access 동기화용)
+struct lock frame_table_lock;
+
 void
 vm_init (void) {
-	vm_anon_init ();
-	vm_file_init ();
-#ifdef EFILESYS  /* For project 4 */
-	pagecache_init ();
+  vm_anon_init ();
+  vm_file_init ();
+  // [*] 전역 Frame Table 초기화
+  list_init(&frame_table);
+  lock_init(&frame_table_lock);
+
+#ifdef EFILESYS
+  pagecache_init ();
 #endif
-	register_inspect_intr ();
-	/* DO NOT MODIFY UPPER LINES. */
-	/* TODO: Your code goes here. */
+  register_inspect_intr ();
 }
+
 
 /* 페이지의 타입을 가져옵니다. 이 함수는 페이지가 초기화된 후 
  * 해당 페이지의 타입을 알고 싶을 때 유용합니다.
@@ -129,42 +141,65 @@ spt_remove_page (struct supplemental_page_table *spt, struct page *page) {
 /* 교체(eviction)될 struct frame을 가져옵니다. */
 static struct frame *
 vm_get_victim (void) {
-	struct frame *victim = NULL;
-	 /* TODO: The policy for eviction is up to you. */
+  struct frame *victim = NULL;
 
-	return victim;
+  lock_acquire(&frame_table_lock);
+  if (!list_empty(&frame_table)) {
+    // 단순히 첫 프레임을 victim으로
+    struct list_elem *e = list_pop_front(&frame_table);
+    victim = list_entry(e, struct frame, elem);
+  }
+  lock_release(&frame_table_lock);
+
+  return victim;
 }
+
 
 /* 하나의 페이지를 교체하고 해당 frame을 반환합니다.
  * 오류가 발생하면 NULL을 반환합니다. */
 static struct frame *
 vm_evict_frame (void) {
-	struct frame *victim UNUSED = vm_get_victim ();
-	/* TODO: swap out the victim and return the evicted frame. */
+  struct frame *victim = vm_get_victim();
 
-	return NULL;
+  if (victim == NULL) 
+    PANIC("No victim found for eviction");
+
+  // swap-out 실행
+  if (!swap_out(victim->page)) 
+    PANIC("swap_out failed!");
+
+  return victim;
 }
+
 
 /* palloc()을 통해 frame을 얻습니다. 사용 가능한 페이지가 없다면 페이지를 교체(evict)한 후 반환합니다.
  * 이 함수는 항상 유효한 주소를 반환합니다. 즉, 사용자 풀 메모리가 가득 찼을 때도,
  * 이 함수는 frame을 교체하여 가용 메모리를 확보합니다. */
 static struct frame *
 vm_get_frame (void) {
-	// struct frame *frame = NULL;
-	/* TODO: Fill this function. */
+  void *kva = palloc_get_page(PAL_USER);
+  if (kva == NULL) {
+    struct frame *victim = vm_evict_frame();
+    kva = victim->kva;
+    free(victim);
+  }
 
-	// [*]3-B. 커널의 사용자 풀에서 페이지를 가져옴. 현재는 swap_out 구현 전이므로 임시 처리
-	void *kva = palloc_get_page(PAL_USER); // 사용자 풀에서 새로운 physical page를 가져옴
-    if (kva == NULL)   // page 할당 실패 시 표시 (!! swap_out 구현 후 변경)
-        PANIC("out of memory");
-    struct frame *frame = malloc(sizeof(struct frame));
-    if (frame == NULL)
-        PANIC("frame alloc failed");
-    memset(frame, 0, sizeof(struct frame)); 
-    frame->kva = kva;
 
-	return frame;
+  
+
+  struct frame *frame = malloc(sizeof(struct frame));
+  if (frame == NULL) PANIC("frame alloc failed");
+  memset(frame, 0, sizeof(struct frame));
+  frame->kva = kva;
+
+  //Frame Table에 등록
+  lock_acquire(&frame_table_lock);
+  list_push_back(&frame_table, &frame->elem);
+  lock_release(&frame_table_lock);
+
+  return frame;
 }
+
 
 // [*]3-B. 스택 확장 함수
 /* 스택을 확장하는 작업. */
