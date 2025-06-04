@@ -8,13 +8,13 @@
 #include "threads/mmu.h" // [*]3-L pml4_is_dirty, pml4_set_dirty 포함됨
 #include "userprog/process.h" // [*]3-L lazy_load_arg 등 선언
 
-#define ROUND_UP(X, STEP) (((X) + (STEP) - 1) & ~((STEP) - 1))
+#define ROUND_UP(X, STEP) (((X) + (STEP) - 1) & ~((STEP) - 1))//[*]3-L
 
 
-static bool file_backed_swap_in (struct page *page, void *kva);
-static bool file_backed_swap_out (struct page *page);
-static void file_backed_destroy (struct page *page);
-bool lazy_load_segment(struct page *page, void *aux);
+static bool file_backed_swap_in (struct page *page, void *kva);//[*]3-L
+static bool file_backed_swap_out (struct page *page);//[*]3-L
+static void file_backed_destroy (struct page *page);//[*]3-L
+bool lazy_load_segment(struct page *page, void *aux);//[*]3-L
 
 /* 이 구조체는 수정하지 마십시오 */
 static const struct page_operations file_ops = {
@@ -30,7 +30,7 @@ vm_file_init (void) {
 }
 
 /* 파일을 기반으로 하는 페이지(file-backed page)를 초기화합니다 */
-bool
+bool//[*]3-L
 file_backed_initializer (struct page *page, enum vm_type type, void *kva) {
     struct file_page *file_page = &page->file;
     page->operations = &file_ops; // 반드시 file_ops 지정
@@ -91,7 +91,7 @@ file_backed_swap_out (struct page *page) {
 
 
 /* 파일 기반 페이지를 파괴(destroy)합니다. PAGE는 호출자가 해제합니다. */
-static void
+static void//[*]3-L
 file_backed_destroy(struct page *page) {
     struct file_page *file_page = &page->file;
     struct lazy_load_arg *aux = (struct lazy_load_arg *) file_page->aux;
@@ -101,7 +101,7 @@ file_backed_destroy(struct page *page) {
 
 
 /* mmap 작업을 수행합니다 */
-void *
+void *//[*]3-L
 do_mmap (void *addr, size_t length, int writable, struct file *file, off_t offset) {
     // 페이지 크기로 반올림
     size_t read_bytes = length;
@@ -139,28 +139,32 @@ do_mmap (void *addr, size_t length, int writable, struct file *file, off_t offse
 }
 
 /* munmap 작업을 수행합니다 */
-void
+void//[*]3-L
 do_munmap (void *addr) {
     struct thread *curr = thread_current();
     struct page *page = spt_find_page(&curr->spt, addr);
 
     while (page != NULL) {
-        if (pml4_is_dirty(curr->pml4, page->va)) {
-            // 페이지가 더럽혀졌으면 write back
-            struct file_page *file_page = &page->file;
-            struct lazy_load_arg *aux = (struct lazy_load_arg *) file_page->aux;
+        struct file_page *file_page = &page->file;
+        struct lazy_load_arg *aux = (struct lazy_load_arg *) file_page->aux;
+
+        // dirty 플래그를 정확히 확인: 실제 pml4, frame 둘 다 dirty여야 write-back!
+        if (pml4_is_dirty(curr->pml4, page->va) || pml4_is_dirty(curr->pml4, page->frame->kva)) {
             file_write_at(aux->file, page->va, aux->read_bytes, aux->ofs);
+
+            // dirty bit 클리어
+            pml4_set_dirty(curr->pml4, page->va, false);
+            pml4_set_dirty(curr->pml4, page->frame->kva, false);
         }
 
-        // 페이지 제거 (destroy + SPT 해제)
+        // SPT에서 제거 (destroy도 함께)
         vm_dealloc_page(page);
         addr += PGSIZE;
-
-        // 다음 페이지 탐색
         page = spt_find_page(&curr->spt, addr);
     }
 }
 
+//[*]3-L
 bool
 lazy_load_segment(struct page *page, void *aux) {
     struct lazy_load_arg *args = (struct lazy_load_arg *)aux;

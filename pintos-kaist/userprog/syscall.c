@@ -51,7 +51,7 @@ void check_address(const void *addr);
 void check_buffer(const void *buffer, unsigned size);
 
 // 내부 함수
-static struct file *find_file_by_fd(int fd);
+static struct file *find_file_by_fd(int fd);//[*]3-L
 
 /*
 이 파일에서 프로세스 생성과 실행을 관리한다
@@ -148,9 +148,13 @@ syscall_handler (struct intr_frame *f UNUSED) {
   case SYS_WAIT:
     f->R.rax = sys_wait((pid_t)f->R.rdi);
     break;
+
+  //[*]3-L
   case SYS_MMAP:
     f->R.rax = (uint64_t)sys_mmap((void *)f->R.rdi, (size_t)f->R.rsi, (int)f->R.rdx, (int)f->R.r10, (off_t)f->R.r8);
     break;
+  
+  //[*]3-L
   case SYS_MUNMAP:
     sys_munmap((void *)f->R.rdi);
     break;
@@ -272,7 +276,7 @@ sys_close(int fd){
     lock_release(&filesys_lock);
 }
 
-
+//[*]3-L process.c와의 씽크를 위
 int sys_wait(pid_t pid){
   return process_wait(pid);
 }
@@ -399,7 +403,7 @@ sys_filesize (int fd){
   return length;
 }
 
-// [*]2-K 유저 영역에서 커널 영역 침범하지 않았는지 확인
+//[*]3-L
 void check_address(const void *addr) {
   struct thread *t = thread_current();
 
@@ -409,6 +413,7 @@ void check_address(const void *addr) {
   }
 }
 
+//[*]3-L
 void check_buffer(const void *buffer, unsigned size) {
   const uint8_t *start = buffer;
   const uint8_t *end = start + size;
@@ -443,7 +448,7 @@ static struct file *find_file_by_fd(int fd)
 
 
 
-void *
+void *//[*]3-L
 sys_mmap(void *addr, size_t length, int writable, int fd, off_t offset) {
   // [중요!] mmap은 fd가 0/1 (stdin, stdout)이면 실패해야 함
   if (fd == 0 || fd == 1 || length == 0 || addr == NULL || pg_ofs(addr) != 0)
@@ -464,7 +469,7 @@ sys_mmap(void *addr, size_t length, int writable, int fd, off_t offset) {
   return ret;
 }
 
-void
+void//[*]3-L
 sys_munmap(void *addr) {
   if (addr == NULL || pg_ofs(addr) != 0)
     return;
