@@ -241,6 +241,7 @@ vm_alloc_page_with_initializer (enum vm_type type, void *upage, bool writable,
 /* spt에서 VA를 찾아 해당 페이지를 반환합니다. 오류가 발생하면 NULL을 반환합니다. */
 struct page *
 spt_find_page (struct supplemental_page_table *spt UNUSED, void *va UNUSED) {
+    if(spt == NULL || va == NULL) return NULL;
 	struct page temp;
 	temp.va = pg_round_down(va); /* 찾을 va를 페이지 단위로 정렬하기 */
 	struct hash_elem *e = hash_find(&spt->spt, &temp.hash_elem); /* [*]3-Q. 임시 page를 만들어 해당 주소를 가진 entry를 hash table에서 찾음 */
@@ -352,41 +353,41 @@ vm_handle_wp (struct page *page UNUSED) {
 
 bool vm_try_handle_fault(struct intr_frame *f, void *addr,
                          bool user, bool write, bool not_present) {
-    printf("[DEBUG] vm_try_handle_fault: fault at addr=%p user=%d write=%d not_present=%d\n",
-           addr, user, write, not_present);
+    // printf("[DEBUG] vm_try_handle_fault: fault at addr=%p user=%d write=%d not_present=%d\n",
+        //    addr, user, write, not_present);
 
     struct supplemental_page_table *spt = &thread_current()->spt;
     void *page_va = pg_round_down(addr);
 
     if (addr == NULL || is_kernel_vaddr(addr)) {
-        printf("[DEBUG] vm_try_handle_fault: invalid address! addr=%p\n", addr);
+        // printf("[DEBUG] vm_try_handle_fault: invalid address! addr=%p\n", addr);
         return false;
     }
 
     struct page *page = spt_find_page(spt, page_va);
-    printf("[DEBUG] spt_find_page() returned: %p\n", page);
+    // printf("[DEBUG] spt_find_page() returned: %p\n", page);
 
     if (!page) {
-        printf("[DEBUG] page not found in SPT. Checking stack growth...\n");
+        // printf("[DEBUG] page not found in SPT. Checking stack growth...\n");
         if ((user && addr >= USER_STACK - MAX_STACK_SIZE && addr >= f->rsp - 8)) {
-            printf("[DEBUG] stack growth triggered!\n");
+            // printf("[DEBUG] stack growth triggered!\n");
             vm_stack_growth(addr);
             page = spt_find_page(spt, page_va);
-            printf("[DEBUG] after vm_stack_growth: page=%p\n", page);
+            // printf("[DEBUG] after vm_stack_growth: page=%p\n", page);
             if (!page)
                 return false;
         } else {
-            printf("[DEBUG] no stack growth. returning false.\n");
+            // printf("[DEBUG] no stack growth. returning false.\n");
             return false;
         }
     }
 
     if (write && !page->writable) {
-        printf("[DEBUG] write to readonly page! returning false.\n");
+        // printf("[DEBUG] write to readonly page! returning false.\n");
         return false;
     }
 
-    printf("[DEBUG] calling vm_do_claim_page() for va=%p\n", page_va);
+    // printf("[DEBUG] calling vm_do_claim_page() for va=%p\n", page_va);
     return vm_do_claim_page(page);
 }
 
@@ -418,7 +419,7 @@ struct page *page = spt_find_page(&thread_current()->spt, va); // pst_find_page(
 static bool vm_do_claim_page(struct page *page) {
     struct frame *frame = vm_get_frame();
     if (frame == NULL) {
-        printf("[ERROR] vm_do_claim_page: frame 할당 실패\n");
+        // printf("[ERROR] vm_do_claim_page: frame 할당 실패\n");
         return false;
     }
 
@@ -426,22 +427,22 @@ static bool vm_do_claim_page(struct page *page) {
     page->frame = frame;
 
     if (!swap_in(page, frame->kva)) {
-        printf("[ERROR] vm_do_claim_page: swap_in 실패\n");
+        // printf("[ERROR] vm_do_claim_page: swap_in 실패\n");
         frame_free(frame);
         return false;
     }
 
     //직전에 주소/플래그 출력
-    printf("[DEBUG] vm_do_claim_page: va=%p kva=%p writable=%d\n",
-           page->va, frame->kva, page->writable);
+    // printf("[DEBUG] vm_do_claim_page: va=%p kva=%p writable=%d\n",
+    //        page->va, frame->kva, page->writable);
 
     //커널 주소 여부도 체크
     if (is_kernel_vaddr(page->va))
-        printf("[ERROR] vm_do_claim_page: 커널 영역 va=%p 매핑 시도!\n", page->va);
+        // printf("[ERROR] vm_do_claim_page: 커널 영역 va=%p 매핑 시도!\n", page->va);
 
     if (!pml4_set_page(thread_current()->pml4, page->va, frame->kva, page->writable)) {
-        printf("[ERROR] vm_do_claim_page: pml4_set_page 실패! va=%p kva=%p writable=%d\n",
-               page->va, frame->kva, page->writable);
+        // printf("[ERROR] vm_do_claim_page: pml4_set_page 실패! va=%p kva=%p writable=%d\n",
+            //    page->va, frame->kva, page->writable);
         frame_free(frame);
         return false;
     }
@@ -496,7 +497,7 @@ void
 supplemental_page_table_kill (struct supplemental_page_table *spt UNUSED) {
 	/* TODO: 스레드가 보유한 모든 supplemental_page_table을 제거하고,
 	 * TODO: 수정된 내용을 스토리지에 다시 씁니다(writeback). */
-	hash_destroy(&spt->spt, page_destroy);	
+	hash_clear(&spt->spt, page_destroy);	
 }
 
 
@@ -522,6 +523,3 @@ page_destroy(struct hash_elem *e, void *aux UNUSED){
 	struct page *page = hash_entry(e, struct page, hash_elem);
 	vm_dealloc_page(page);
 }
-
-
-

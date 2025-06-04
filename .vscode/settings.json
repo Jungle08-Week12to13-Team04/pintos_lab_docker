@@ -35,6 +35,9 @@
         "utility": "c",
         "debug.h": "c",
         "gdt.h": "c",
-        "exception.h": "c"
+        "exception.h": "c",
+        "inspect.h": "c",
+        "vm.h": "c",
+        "hash.h": "c"
     }
 }

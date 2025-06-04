@@ -31,9 +31,10 @@ static const struct page_operations anon_ops = {
 //[*]3-L_anongla
 void
 vm_anon_init (void) {
-    swap_disk = disk_get(1, 1); // 스왑 디스크 획득
-    swap_table = bitmap_create(disk_size(swap_disk) / 8); // 슬롯 수 = 섹터수 / 8
-    lock_init(&swap_lock); // 락 초기화
+    // swap_disk = disk_get(1, 1); // 스왑 디스크 획득
+    // swap_table = bitmap_create(disk_size(swap_disk) / 8); // 슬롯 수 = 섹터수 / 8
+    // lock_init(&swap_lock); // 락 초기화
+    swap_disk = NULL;
 }
 
 

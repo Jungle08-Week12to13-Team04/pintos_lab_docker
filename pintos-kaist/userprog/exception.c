@@ -5,6 +5,7 @@
 #include "threads/interrupt.h"
 #include "threads/thread.h"
 #include "intrinsic.h"
+#include "vm/vm.h"
 
 /*
 사용자 프로세스가 허용되지 않은 작업을 하거나 커널에 접근하려할때,
@@ -202,10 +203,21 @@ page_fault (struct intr_frame *f) {
   printf ("[DEBUG] page_fault: fault_addr=%p not_present=%d write=%d user=%d\n",
           fault_addr, not_present, write, user);
 
-  // 기존 코드 유지
-  if (vm_try_handle_fault (f, fault_addr, user, write, not_present))
-    return;
+		printf("1?\n");
+	if (is_kernel_vaddr(fault_addr)){
+		sys_exit(-1);
+		return;
+	}
+	printf("2?\n");
 
+	#ifdef VM
+		printf("2?\n");
+		if (vm_try_handle_fault (f, fault_addr, user, write, not_present))
+			return;
+	#endif
+
+	printf("정상적인 페이지 폴트 처리 못함");
+	sys_exit(-1);
   printf ("[ERROR] Page fault at %p: %s error %s page in %s context.\n",
           fault_addr,
           not_present ? "not present" : "rights violation",
