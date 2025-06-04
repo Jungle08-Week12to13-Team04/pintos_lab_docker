@@ -82,6 +82,9 @@ initd(void *f_name)
 	NOT_REACHED();
 }
 
+
+
+
 // [*]3-B.
 struct fork_info {
 	struct thread *parent;
@@ -99,6 +102,8 @@ tid_t process_fork(const char *name, struct intr_frame *if_ UNUSED)
 
 	//[*]3-B. 
 	struct fork_info *args = palloc_get_page(0);
+	if (args == NULL)
+		return TID_ERROR;
 	args->parent = thread_current();
 	memcpy(&args->parent_tf, &if_, sizeof(struct intr_frame));
 
@@ -106,6 +111,7 @@ tid_t process_fork(const char *name, struct intr_frame *if_ UNUSED)
 	tid_t tid = thread_create(name, PRI_DEFAULT, __do_fork, args);	//[*]3-B. if_->args
 	if (tid == TID_ERROR)
 	{
+		palloc_free_page(args);
 		return TID_ERROR;
 	}
 
@@ -222,6 +228,12 @@ __do_fork(void *aux)
 	struct intr_frame *parent_tf = args->parent_tf;
 	struct thread *cur = thread_current();
 
+	cur->fd_table = palloc_get_multiple(PAL_ZERO, FDT_PAGES);
+	if (cur->fd_table == NULL)
+		goto error;
+
+	cur->next_fd = 2; 
+
 	memcpy(&cur->tf, parent_tf, sizeof(struct intr_frame));
 	palloc_free_page(args);  // 메모리 해제
 
@@ -265,6 +277,8 @@ __do_fork(void *aux)
 		if (parent_file != NULL){
 			struct file *child_file = file_duplicate(parent_file);
 			if (child_file == NULL){
+			    printf("file_duplicate failed at fd %d\n", i);
+
 				// 부모의 파일 중 하나라도 복제 실패하면 프로세스 복제 실패로 간주,
 				succ = false;
 				printf("out of memory during file_duplicate at %d\n", i);
