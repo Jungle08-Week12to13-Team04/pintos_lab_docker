@@ -48,7 +48,7 @@ int sys_wait(pid_t pid);
 
 // 유저 영역 검증 함수
 void check_address(const void *addr);
-void check_buffer(const void *buffer, unsigned size);
+void check_buffer(void *buffer, unsigned size);
 
 // 내부 함수
 static struct file *find_file_by_fd(int fd);//[*]3-L
