@@ -24,7 +24,6 @@ bool
 file_backed_initializer (struct page *page, enum vm_type type, void *kva) {
 	/* 핸들러(handler)를 설정합니다 */
 	page->operations = &file_ops;
-
 	struct file_page *file_page = &page->file;
 }
 

@@ -30,7 +30,6 @@ static void process_cleanup(void);
 static bool load(const char *file_name, struct intr_frame *if_);
 static void initd(void *f_name);
 static void __do_fork(void *);
-static bool push_stack_fr(struct intr_frame *if_);
 
 /* General process initializer for initd and other process. */
 static void
@@ -57,6 +56,7 @@ tid_t process_create_initd(const char *file_name)
 	strlcpy(fn_copy, file_name, PGSIZE);
 
 	char *save_ptr;
+	strtok_r(file_name, " ", &save_ptr); //[*]3-B. 추가
 
 	// file_name ="args-single onearg"
 	char *prog_name = strtok_r(file_name, " ", &save_ptr);
@@ -200,7 +200,7 @@ __do_fork(void *aux)
 
 	struct intr_frame *parent_tf = (struct intr_frame*) aux;
 	struct thread *cur = thread_current();
-	// printf("%p\n", parent_tf);
+	struct thread *parent = (struct thread *)aux; // [*]3-B. 추가
 
 	memcpy(&cur->tf, parent_tf, sizeof(struct intr_frame));
 
@@ -217,8 +217,8 @@ __do_fork(void *aux)
 		goto error;
 	process_activate(cur);
 #ifdef VM
-	supplemental_page_table_init(&current->spt);
-	if (!supplemental_page_table_copy(&current->spt, &parent->spt))
+	supplemental_page_table_init(&cur->spt); // [*]3-B. 변경
+	if (!supplemental_page_table_copy(&cur->spt, &parent->spt)) 
 		goto error;
 #else // 부모의 사용자 주소 공간을 자식에게 복사하는 과정 - VM을 사용하지 않는 경우
 	if (!pml4_for_each(cur->parent->pml4, duplicate_pte, cur->parent))
@@ -294,67 +294,29 @@ int process_exec(void *f_name)
 	// 기존 환경을 청소하는 작업.
 	process_cleanup();
 
-	/* [*]
-	for implement argument passing
-	before load,
-	스택 프레임에 프로그램 실행을 위한 정보들(인자 문자열, argv 배열, argc, fake return address 등)을
-	쌓아넣기 위해 받은 입력값을 파싱하는 작업을 이 위치에서 수행합니다.
-
-	유저 애플리케이션은 인자 전달을 위해 %rdi, %rsi, %rdx, %rcx, %r8, %r9 순서로 정수 레지스터를 사용함.
-
-
-	공백을 기준으로 문자열을 나눠서,
-	첫 번째 단어는 프로그램 이름
-	두번째 단어부터 첫번째 인자로 처리되도록 구현
-	*/
 	//
+	// for implement argument passing
+	// before load,
+	// 스택 프레임에 프로그램 실행을 위한 정보들(인자 문자열, argv 배열, argc, fake return address 등)을
+	// 쌓아넣기 위해 받은 입력값을 파싱하는 작업을 이 위치에서 수행합니다.
 
-	int argc = 0;
-	char *argv[ARGUMENT_LIMIT];
-	char *token, *save_ptr;
+	// 유저 애플리케이션은 인자 전달을 위해 %rdi, %rsi, %rdx, %rcx, %r8, %r9 순서로 정수 레지스터를 사용함.
 
-	// 현재 file_name = "args-single onearg"
-
-	token = strtok_r(file_name, " ", &save_ptr);
-	// 모든 토큰을 처리
-	while (token != NULL && argc < ARGUMENT_LIMIT)
-	{
-		// 현재 토큰을 argv 배열에 저장
-		argv[argc] = token;
-		argc++;
-
-		// 다음 토큰 가져오기
-		token = strtok_r(NULL, " ", &save_ptr);
-	}
-
-	if (argc < ARGUMENT_LIMIT)
-	{
-		argv[argc] = NULL;
-	}
-
-	/*
-	파싱 후
-	argc = 2
-
-	argv[0] = "args-single"
-	argv[1] = "onearg"
-	argv[2] = NULL
-	*/
-
-	memcpy(file_name, argv[0], sizeof(argv[0])+ 1);
-	// 레지스터에 main함수에서 쓰이는 첫번째 인자와 두번째 인자 전달.
-	_if.R.rdi = argc;
-	_if.R.rsi = (uint64_t)argv; // 주소값을 정수로 전달할 때, uint64_t를 사용.
+	//[*]3-B. argument passing 수정
+    char *parse[64];
+    char *token, *save_ptr;
+    int count = 0;
+    for (token = strtok_r(file_name, " ", &save_ptr); token != NULL; token = strtok_r(NULL, " ", &save_ptr))
+        parse[count++] = token;
 
 	/* And then load the binary */
 	success = load(file_name, &_if);
 
-
-	push_stack_fr(&_if);
-	// 레지스터에 main함수에서 쓰이는 첫번째 인자와 두번째 인자 전달.
-	// 주소값을 정수로 전달할 때, uint64_t를 사용.
-	// hex_dump(_if.rsp, _if.rsp, USER_STACK - (uint64_t)_if.rsp, true);
-
+	//[*]3-B. argument passing 수정
+	argument_stack(parse, count, &_if.rsp); // 함수 내부에서 parse와 rsp의 값을 직접 변경하기 위해 주소 전달
+    _if.R.rdi = count;
+    _if.R.rsi = (char *)_if.rsp + 8;
+	
 	/* If load failed, quit. */
 	palloc_free_page(file_name);
 	if (!success)
@@ -739,46 +701,46 @@ validate_segment(const struct Phdr *phdr, struct file *file)
 	return true;
 }
 
-// [*]2-O 스택 프레임 구성용 함수
-static bool push_stack_fr(struct intr_frame *if_)
+// [*]3-B. argument passing stack 구성용 함수 재 작성
+void argument_stack(char **parse, int count, void **rsp) // 주소를 전달받았으므로 이중 포인터 사용
 {
-	char **argv = (char **)if_->R.rsi;
-	int argc = if_->R.rdi;
-	// 스택에 저장된 문자열의 주소를 저장 추후 프레임에 추가
-	char *addrs_argv[argc];
+    // 프로그램 이름, 인자 문자열 push
+    for (int i = count - 1; i > -1; i--)
+    {
+        for (int j = strlen(parse[i]); j > -1; j--)
+        {
+            (*rsp)--;                      // 스택 주소 감소
+            **(char **)rsp = parse[i][j]; // 주소에 문자 저장
+        }
+        parse[i] = *(char **)rsp; // parse[i]에 현재 rsp의 값 저장해둠(지금 저장한 인자가 시작하는 주소값)
+    }
 
-	// argv 문자열 먼저 푸쉬
-	for (int i = argc - 1; i >= 0; i--)
-	{
-		size_t len = strlen(argv[i]) + 1; // 널 종단문자 포함
-		if_->rsp -= len;
-		if ((uint64_t)if_->rsp < STACK_LIMIT)
-			return false;
-		memcpy(if_->rsp, argv[i], len);
-		addrs_argv[i] = if_->rsp;
-	}
+    // 정렬 패딩 push
+    int padding = (int)*rsp % 8;
+    for (int i = 0; i < padding; i++)
+    {
+        (*rsp)--;
+        **(uint8_t **)rsp = 0; // rsp 직전까지 값 채움
+    }
 
-	// 정렬용 패딩
-	if_->rsp = (uint64_t)if_->rsp & ~0x7;
+    // 인자 문자열 종료를 나타내는 0 push
+    (*rsp) -= 8;
+    **(char ***)rsp = 0; // char* 타입의 0 추가
 
-	// 문자열 시작주소 푸쉬
-	// 마지막 문자열 표시
-	if_->rsp -= sizeof(uintptr_t);
-	memset(if_->rsp, 0, sizeof(uintptr_t));
+    // 각 인자 문자열의 주소 push
+    for (int i = count - 1; i > -1; i--)
+    {
+        (*rsp) -= 8; // 다음 주소로 이동
+        **(char ***)rsp = parse[i]; // char* 타입의 주소 추가
+    }
 
-	for (int i = argc - 1; i >= 0; i--)
-	{
-		if_->rsp -= sizeof(uintptr_t);
-		memcpy(if_->rsp, &addrs_argv[i], sizeof(uintptr_t));
-	}
-
-	if_->R.rsi = if_->rsp;
-	// 규약상 필요한 주소에 가짜주소 채워넣기
-	if_->rsp -= sizeof(uintptr_t);
-	memset(if_->rsp, 0, sizeof(uintptr_t));
-
-	return true;
+    // return address push
+    (*rsp) -= 8;
+    **(void ***)rsp = 0; // void* 타입의 0 추가
 }
+
+
+
 
 #ifndef VM
 /* Codes of this block will be ONLY USED DURING project 2.
@@ -895,7 +857,25 @@ lazy_load_segment(struct page *page, void *aux)
 {
 	/* TODO: Load the segment from the file */
 	/* TODO: This called when the first page fault occurs on address VA. */
-	/* TODO: VA is available when calling this function. */
+	/* TODO: VA is available when calling this function. */\
+	
+	// [*]3-B. 실행 파일의 내용을 페이지로 로딩하는 함수이며 첫번째 page fault가 발생할 때 호출됨
+	// 이 함수가 호출되기 이전에 물리 프레임 매핑이 진행되므로, 물리 프레임에 내용을 로딩하는 작업만 하면 됨
+	struct lazy_load_arg *lazy_load_arg = (struct lazy_load_arg *)aux;
+
+	file_seek(lazy_load_arg->file, lazy_load_arg->ofs); // 파일의 position을 ofs으로 지정
+	// 파일을 read_bytes만큼 물리 프레임에 읽어 들임
+	if (file_read(lazy_load_arg->file, page->frame->kva, lazy_load_arg->read_bytes) != (int)(lazy_load_arg->read_bytes))
+	{
+		palloc_free_page(page->frame->kva);
+		return false;
+	}
+	// 다 읽은 지점부터 zero_bytes만큼 0으로 채움
+	memset(page->frame->kva + lazy_load_arg->read_bytes, 0, lazy_load_arg->zero_bytes);
+
+	return true;
+
+	
 }
 
 /* Loads a segment starting at offset OFS in FILE at address
@@ -925,19 +905,33 @@ load_segment(struct file *file, off_t ofs, uint8_t *upage,
 		/* Do calculate how to fill this page.
 		 * We will read PAGE_READ_BYTES bytes from FILE
 		 * and zero the final PAGE_ZERO_BYTES bytes. */
+		// 페이지를 채우는 방법을 계산 -> 파일에서 PAGE_READ_BYTES 만큼 읽고, 나머지 PAGE_ZERO_BYTES 만큼 0으로 채움
 		size_t page_read_bytes = read_bytes < PGSIZE ? read_bytes : PGSIZE;
 		size_t page_zero_bytes = PGSIZE - page_read_bytes;
 
 		/* TODO: Set up aux to pass information to the lazy_load_segment. */
-		void *aux = NULL;
+		// void *aux = NULL;
+		
+		// [*]3-B. loading을 위해 필요한 정보를 포함하는 구조체 구성
+		// vm_alloc_page_with_initializer에 제공할 aux 인수로 필요한 보조 값들을 설정
+		struct lazy_load_arg *lazy_load_arg = (struct lazy_load_arg *)malloc(sizeof(struct lazy_load_arg));
+		lazy_load_arg->file = file;					 // 내용이 담긴 파일 객체
+		lazy_load_arg->ofs = ofs;					 // 이 페이지에서 읽기 시작할 위치
+		lazy_load_arg->read_bytes = page_read_bytes; // 이 페이지에서 읽어야 하는 바이트 수
+		lazy_load_arg->zero_bytes = page_zero_bytes; // 이 페이지에서 read_bytes만큼 읽고 공간이 남아 0으로 채워야 하는 바이트 수
+		// vm_alloc_page_with_initializer를 호출하여 대기 중인 객체를 생성
+
 		if (!vm_alloc_page_with_initializer(VM_ANON, upage,
-											writable, lazy_load_segment, aux))
+											writable, lazy_load_segment, lazy_load_arg))
 			return false;
 
+
 		/* Advance. */
+		// 다음 반복을 위하여 읽어들인 만큼 값을 갱신
 		read_bytes -= page_read_bytes;
 		zero_bytes -= page_zero_bytes;
 		upage += PGSIZE;
+		ofs += page_read_bytes;
 	}
 	return true;
 }
@@ -953,6 +947,16 @@ setup_stack(struct intr_frame *if_)
 	 * TODO: If success, set the rsp accordingly.
 	 * TODO: You should mark the page is stack. */
 	/* TODO: Your code goes here */
+
+	// [*]3-B. STACK의 페이지를 생성하는 함수
+	// stack_bottom에 스택을 매핑하고 페이지를 즉시 요청함. 성공하면 rsp를 그에 맞게 설정, 페이지가 스택임을 표시해야 함.
+	if (vm_alloc_page(VM_ANON | VM_MARKER_0, stack_bottom, 1))  // stack_bottom에 페이지를 하나 할당받음
+	// VM_MARKER_0: 스택이 저장된 메모리 페이지임을 식별, writable: argument_stack()에서 값을 넣어야 하니 True
+	{
+		success = vm_claim_page(stack_bottom); // 할당 받은 페이지에 바로 물리 프레임을 매핑
+		if (success)
+			if_->rsp = USER_STACK; // rsp를 변경
+	}
 
 	return success;
 }
