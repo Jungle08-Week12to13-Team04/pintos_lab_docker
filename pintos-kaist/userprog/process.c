@@ -31,6 +31,12 @@ static bool load(const char *file_name, struct intr_frame *if_);
 static void initd(void *f_name);
 static void __do_fork(void *);
 
+/* [*]3-Q. 부모스레드 정보를 포함한 구조체 선언(__do_fork() 에 사용) */
+struct fork_args {
+	struct intr_frame tf; // 부모의 intr_frame (CPU context 정보)
+	struct thread *parent; // 부모의 thread 포인터
+};
+
 /* General process initializer for initd and other process. */
 static void
 process_init(void)
@@ -87,35 +93,68 @@ initd(void *f_name)
 // [*]2-B. fork 구현
 tid_t process_fork(const char *name, struct intr_frame *if_ UNUSED)
 {
-	struct thread *cur = thread_current(); // 현재 부모 스레드
-	struct thread *real_child;
-	tid_t tid = thread_create(name, PRI_DEFAULT, __do_fork, if_);
-	if (tid == TID_ERROR)
-	{
-		return TID_ERROR;
-	}
+	// struct thread *cur = thread_current(); // 현재 부모 스레드
+	// struct thread *real_child;
+	// tid_t tid = thread_create(name, PRI_DEFAULT, __do_fork, if_);
+	// if (tid == TID_ERROR)
+	// {
+	// 	return TID_ERROR;
+	// }
 
+	// struct list_elem *e;
+	// for (e = list_begin(&cur->child_list); e != list_end(&cur->child_list); e = list_next(e)) // 자식 리스트를 순회
+	// {
+	// 	struct thread *child = list_entry(e, struct thread, child_elem);
+		
+	// 	if (child->tid != tid){						   
+	// 		continue;
+	// 	}
+	// 	else {
+	// 		real_child = child;
+	// 		break;
+	// 	}
+	// }
+
+	// sema_down(&cur->fork_sema);
+	// // 세마 업으로 깨어났을때, 정상복제인지 복제실패인지 확인하고 실패하면 TID_ERROR 반환;
+	// if (real_child->exit_status == -1)
+	// {	
+	// 	return TID_ERROR;
+	// }
+	
+	// return tid;
+
+	struct thread *cur = thread_current();
+	struct fork_args *args = malloc(sizeof(struct fork_args));
+	if (args == NULL)
+		return TID_ERROR;
+
+	// 부모 정보 저장
+	args->tf = *if_;
+	args->parent = cur;
+
+	// __do_fork에 새로운 구조체 전달
+	tid_t tid = thread_create(name, PRI_DEFAULT, __do_fork, args);
+	if (tid == TID_ERROR)
+		free(args);
+
+	struct thread *real_child = NULL;
 	struct list_elem *e;
-	for (e = list_begin(&cur->child_list); e != list_end(&cur->child_list); e = list_next(e)) // 자식 리스트를 순회
+	for (e = list_begin(&cur->child_list); e != list_end(&cur->child_list); e = list_next(e))
 	{
 		struct thread *child = list_entry(e, struct thread, child_elem);
-		
-		if (child->tid != tid){						   
-			continue;
-		}
-		else {
+		if (child->tid == tid)
+		{
 			real_child = child;
 			break;
 		}
 	}
 
 	sema_down(&cur->fork_sema);
-	// 세마 업으로 깨어났을때, 정상복제인지 복제실패인지 확인하고 실패하면 TID_ERROR 반환;
-	if (real_child->exit_status == -1)
-	{	
+	if (real_child && real_child->exit_status == -1)
+	{
 		return TID_ERROR;
 	}
-	
 	return tid;
 }
 
@@ -129,7 +168,9 @@ duplicate_pte(uint64_t *pte, void *va, void *aux)
 	// va = 작업 대상인 가상주소
 	// *pte = 그 가상주소가 매핑된 물리 페이지 번호 + 쓰기 허용 여부를 나타내는 플래그
 	struct thread *current = thread_current();
-	struct thread *parent = (struct thread *)aux;
+	// struct thread *parent = (struct thread *)aux;
+	struct thread *child = (struct thread *)aux;
+	struct thread *parent = child->parent;
 	void *parent_page;
 	void *newpage;
 	bool writable;
@@ -192,17 +233,26 @@ duplicate_pte(uint64_t *pte, void *va, void *aux)
 static void
 __do_fork(void *aux)
 {
-	// [*]2-o. 각 작업 마다 성공여부 기록, 모든 복사작업 중 하나라도 실패하면 복제 실패로 간주해야함.
+	// // [*]2-o. 각 작업 마다 성공여부 기록, 모든 복사작업 중 하나라도 실패하면 복제 실패로 간주해야함.
+	// bool succ = true;
+
+	// // /* 1. Read the cpu context to local stack. */
+	// // [*]2-o 1. 부모의 실행 흐름을 이어가기 위한 callee-saved reg
+
+	// struct intr_frame *parent_tf = (struct intr_frame*) aux;
+	// struct thread *cur = thread_current();
+	// struct thread *parent = (struct thread *)aux; // [*]3-B. 추가
+
+	/* [*]3-Q. 수정 */
+	struct fork_args *args = (struct fork_args *)aux;
+	struct thread *cur = thread_current();
+	struct thread *parent = args->parent;
 	bool succ = true;
 
-	// /* 1. Read the cpu context to local stack. */
-	// [*]2-o 1. 부모의 실행 흐름을 이어가기 위한 callee-saved reg
+	// memcpy(&cur->tf, parent_tf, sizeof(struct intr_frame));
 
-	struct intr_frame *parent_tf = (struct intr_frame*) aux;
-	struct thread *cur = thread_current();
-	struct thread *parent = (struct thread *)aux; // [*]3-B. 추가
-
-	memcpy(&cur->tf, parent_tf, sizeof(struct intr_frame));
+	/* [*]3-Q */
+	memcpy(&cur->tf, &args->tf, sizeof(struct intr_frame));
 
 	// void *memcpy(void *dest, const void *src, size_t n)
 	// src 주소로부터 n바이트를 읽어서 dest 주소로 복사한다.
@@ -212,13 +262,21 @@ __do_fork(void *aux)
 
 	// 2. 부모프로세스가 갖고있는 가상메모리 구조
 	// 2-1. 단, 실제 물리메모리 영역이 겹치면 안됨
+	// cur->pml4 = pml4_create();
+	// if (cur->pml4 == NULL)
+	// 	goto error;
+	// process_activate(cur);
+
+	/* [*]3-Q */
 	cur->pml4 = pml4_create();
-	if (cur->pml4 == NULL)
+	if (!cur->pml4 == NULL)
 		goto error;
 	process_activate(cur);
+
 #ifdef VM
 	supplemental_page_table_init(&cur->spt); // [*]3-B. 변경
 	if (!supplemental_page_table_copy(&cur->spt, &parent->spt)) 
+		succ = false;
 		goto error;
 #else // 부모의 사용자 주소 공간을 자식에게 복사하는 과정 - VM을 사용하지 않는 경우
 	if (!pml4_for_each(cur->parent->pml4, duplicate_pte, cur->parent))
@@ -237,38 +295,70 @@ __do_fork(void *aux)
 
 	
 
-	for (int i = 2; i < OPEN_LIMIT; i++){
+	// for (int i = 2; i < OPEN_LIMIT; i++){
 
-		struct file *parent_file = cur->parent->fd_table[i];
+	// 	struct file *parent_file = cur->parent->fd_table[i];
+	// 	if (parent_file != NULL){
+	// 		struct file *child_file = file_duplicate(parent_file);
+	// 		if (child_file == NULL){
+	// 			// 부모의 파일 중 하나라도 복제 실패하면 프로세스 복제 실패로 간주,
+	// 			succ = false;
+	// 			printf("out of memory during file_duplicate at %d\n", i);
+	// 			goto error;
+	// 		}
+	// 		cur->fd_table[i] = child_file;
+	// 	}
+	// 	else{
+	// 		cur->fd_table[i] = NULL;
+	// 	}
+	// }
+	// cur->next_fd = cur->parent->next_fd;
+	// process_init();
+
+	/* [*]3-Q */
+	for (int i = 2; i < OPEN_LIMIT; i++)
+	{
+		struct file *parent_file = parent->fd_table[i];
 		if (parent_file != NULL){
 			struct file *child_file = file_duplicate(parent_file);
-			if (child_file == NULL){
-				// 부모의 파일 중 하나라도 복제 실패하면 프로세스 복제 실패로 간주,
+			
+			if (child_file == NULL) {
 				succ = false;
-				printf("out of memory during file_duplicate at %d\n", i);
 				goto error;
 			}
 			cur->fd_table[i] = child_file;
-		}
-		else{
+		} else {
 			cur->fd_table[i] = NULL;
 		}
 	}
-	cur->next_fd = cur->parent->next_fd;
-	process_init();
 
 		// 중요한 점은, 부모는 자식이 모든 자원 복제에 성공했을 때에만 fork()에서 리턴해야 한다. 하나라도 삐끗하면 succ=flase 처리 해야함.
 
 	/* Finally, switch to the newly created process. */
 	// 자식 프로세스의 준비가 끝났다면, 실제 유저모드로 진입 (do_iret) 시도한다.
-	cur->tf.R.rax=0;
+// 	cur->tf.R.rax=0;
+// 	cur->exit_status = 0;
+// 	sema_up(&cur->parent->fork_sema);
+// 	if (succ)
+// 		do_iret(&cur->tf);
+// error:
+// 	cur->exit_status = -1;
+// 	sema_up(&cur->parent->fork_sema);
+// 	thread_exit();
+	cur->next_fd = parent->next_fd;
+	process_init();
+	cur->tf.R.rax = 0;
 	cur->exit_status = 0;
-	sema_up(&cur->parent->fork_sema);
+	sema_up(&parent->fork_sema);
+	free(args);
+
 	if (succ)
 		do_iret(&cur->tf);
+	
 error:
 	cur->exit_status = -1;
-	sema_up(&cur->parent->fork_sema);
+	sema_up(&parent->fork_sema);
+	free(args);
 	thread_exit();
 }
 

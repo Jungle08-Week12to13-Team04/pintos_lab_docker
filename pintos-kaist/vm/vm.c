@@ -277,6 +277,34 @@ supplemental_page_table_init (struct supplemental_page_table *spt UNUSED) {
 bool
 supplemental_page_table_copy (struct supplemental_page_table *dst UNUSED,
 		struct supplemental_page_table *src UNUSED) {
+		struct hash_iterator i;
+
+	hash_first(&i, &src->spt_hash);
+
+	while (hash_next(&i)) {
+		struct page *src_page = hash_entry(hash_cur(&i), struct page, hash_elem);
+
+		// UNINIT 타입은 복사 불가 → lazy load 로직 필요
+
+		if (src_page->operations->type == VM_UNINIT) {
+			// 아래처럼 lazy load 상태를 복사
+			bool ok = vm_alloc_page_with_initializer(
+				src_page->uninit.type, src_page->va, src_page->writable,
+				src_page->uninit.init, src_page->uninit.aux);
+
+			if (!ok) return false;
+		} else {
+			// anon, file-backed 등 실제 데이터 복사
+			if (!vm_alloc_page(page_get_type(src_page), src_page->va, src_page->writable)) {
+				return false;
+			}
+			if (!vm_claim_page(src_page->va)) return false;
+
+			struct page *dst_page = spt_find_page(dst, src_page->va);
+			memcpy(dst_page->frame->kva, src_page->frame->kva, PGSIZE);
+		}
+	}
+	return true;
 }
 
 /* 보조 페이지 테이블이 보유한 자원을 해제합니다. */
@@ -284,6 +312,7 @@ void
 supplemental_page_table_kill (struct supplemental_page_table *spt UNUSED) {
 	/* TODO: 스레드가 보유한 모든 supplemental_page_table을 제거하고,
 	 * TODO: 수정된 내용을 스토리지에 다시 씁니다(writeback). */
+	hash_clear(&spt->spt_hash, page_destroy);	
 }
 
 
@@ -308,4 +337,10 @@ page_less(const struct hash_elem *a_, const struct hash_elem *b_, void *aux UNUS
     const struct page *b = hash_entry(b_, struct page, hash_elem);
 
     return a->va < b->va;
+}
+
+void
+page_destroy(struct hash_elem *e, void *aux UNUSED){
+	struct page *page = hash_entry(e, struct page, hash_elem);
+	vm_dealloc_page(page);
 }
