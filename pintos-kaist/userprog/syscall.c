@@ -52,6 +52,7 @@ void check_buffer(void *buffer, unsigned size);
 
 // 내부 함수
 static struct file *find_file_by_fd(int fd);//[*]3-L
+static void check_writable(void *addr); //[*]3-Q
 
 /*
 이 파일에서 프로세스 생성과 실행을 관리한다
@@ -308,9 +309,9 @@ sys_create (const char *file, unsigned initial_size) {
 int
 sys_read(int fd, void *buffer, unsigned size)
 {
-  // check_address(buffer);
-
-  check_buffer(buffer, size);
+  check_address(buffer);
+  check_writable(buffer);
+  // check_buffer(buffer, size);
   
   // 읽은 바이트 수 저장할 변수
   int read_byte = 0;
@@ -436,6 +437,18 @@ void check_buffer(void *buffer, unsigned size) {
         check_address(end - 1);  // [*]3-Q. 마지막 바이트도 반드시 유효한지 확인
 }
 
+/* [*]3-Q. 쓰기여부 검사 함수 추가! */
+static void
+check_writable(void *addr){
+    struct thread *curr = thread_current();
+    if (addr == NULL || !is_user_vaddr(addr))
+        sys_exit(-1);
+    struct page *page = spt_find_page(&curr->spt, addr);
+    if (page == NULL)
+        sys_exit(-1);
+    if (!page->writable)
+        sys_exit(-1);
+}
 
 
 
