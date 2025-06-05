@@ -297,7 +297,6 @@ vm_do_claim_page (struct page *page) {
 	/* TODO: 페이지의 VA를 프레임의 PA에 매핑하기 위한 페이지 테이블 엔트리를 삽입합니다. */
 	// [*]3-B. 가상 주소와 물리 주소를 매핑
 	bool writable = page->writable;
-
 	// pml4_set_page() 실패 시 처리 추가
 	if (! pml4_set_page(thread_current()->pml4, page->va, frame->kva, writable)){
 		free(frame);

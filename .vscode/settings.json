@@ -37,7 +37,6 @@
         "gdt.h": "c",
         "exception.h": "c",
         "inspect.h": "c",
-        "round.h": "c",
-        "process.h": "c"
+        "round.h": "c"
     }
 }
