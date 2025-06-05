@@ -14,7 +14,7 @@
 static bool file_backed_swap_in (struct page *page, void *kva);//[*]3-L
 static bool file_backed_swap_out (struct page *page);//[*]3-L
 static void file_backed_destroy (struct page *page);//[*]3-L
-bool lazy_load_segment(struct page *page, void *aux);//[*]3-L
+static bool lazy_load_segment_a(struct page *page, void *aux);//[*]3-L
 
 /* 이 구조체는 수정하지 마십시오 */
 static const struct page_operations file_ops = {
@@ -69,7 +69,7 @@ file_backed_swap_in (struct page *page, void *kva) {
 // [*]3-L
 static bool
 file_backed_swap_out (struct page *page) {
-    if (page->frame == NULL || !page->frame->page->writable)
+    if (page->frame == NULL)
         return true;
 
     if (pml4_is_dirty(thread_current()->pml4, page->va)) {
@@ -125,7 +125,7 @@ do_mmap (void *addr, size_t length, int writable, struct file *file, off_t offse
         aux->zero_bytes = page_zero_bytes;
 
         // SPT에 페이지 등록
-        if (!vm_alloc_page_with_initializer(VM_FILE, va, writable, lazy_load_segment, aux))
+        if (!vm_alloc_page_with_initializer(VM_FILE, va, writable, lazy_load_segment_a, aux))
             return NULL;
 
         // 다음 페이지로
@@ -148,9 +148,9 @@ do_munmap (void *addr) {
         struct file_page *file_page = &page->file;
         struct lazy_load_arg *aux = (struct lazy_load_arg *) file_page->aux;
 
-        // dirty 플래그를 정확히 확인: 실제 pml4, frame 둘 다 dirty여야 write-back!
-        if (pml4_is_dirty(curr->pml4, page->va) || pml4_is_dirty(curr->pml4, page->frame->kva)) {
-            file_write_at(aux->file, page->va, aux->read_bytes, aux->ofs);
+        // dirty 플래그를 정확히 확인: 실제 pml4, frame 둘 다 dirty여야 write-back! -> ?? 일단 변경
+        if (pml4_is_dirty(curr->pml4, page->va)) {
+            file_write_at(aux->file, page->frame->kva, aux->read_bytes, aux->ofs); // [*]3-B. 변경
 
             // dirty bit 클리어
             pml4_set_dirty(curr->pml4, page->va, false);
@@ -160,24 +160,25 @@ do_munmap (void *addr) {
         // SPT에서 제거 (destroy도 함께)
         vm_dealloc_page(page);
         addr += PGSIZE;
+        if (page->operations != &file_ops) // [*]3-B. 추가 - munmap 범위 오버런 방지
+            break;
         page = spt_find_page(&curr->spt, addr);
     }
 }
 
-//[*]3-L
-bool
-lazy_load_segment(struct page *page, void *aux) {
-    struct lazy_load_arg *args = (struct lazy_load_arg *)aux;
+//[*]3-L / [*]3-B. 전체적으로 변경
+static bool
+lazy_load_segment_a(struct page *page, void *aux) {
 
-    struct file *file = args->file;
-    off_t ofs = args->ofs;
-    size_t page_read_bytes = args->read_bytes;
-    size_t page_zero_bytes = args->zero_bytes;
-
-    if (file_read_at(file, page->frame->kva, page_read_bytes, ofs) != (int) page_read_bytes)
-        return false;
-
-    memset(page->frame->kva + page_read_bytes, 0, page_zero_bytes);
-    page->writable = true;
-    return true;
+    uint8_t* kpage = (page->frame)->kva;
+	uint8_t* upage = page->va;
+	struct load_args_tmp* args = page->uninit.aux;
+	
+	file_seek(args->file, args->ofs);
+	if (file_read (args->file, kpage, args->read_bytes) != (int) args->read_bytes) {
+		palloc_free_page (kpage);
+		return false;
+	}
+	memset(kpage + args->read_bytes, 0, args->zero_bytes);
+	return true;
 }
