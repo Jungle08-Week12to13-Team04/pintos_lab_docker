@@ -101,69 +101,55 @@ file_backed_destroy(struct page *page) {
 
 
 /* mmap 작업을 수행합니다 */
-void *//[*]3-L
+void *//[*]3-L / [*]3-B. 변경
 do_mmap (void *addr, size_t length, int writable, struct file *file, off_t offset) {
-    // 페이지 크기로 반올림
-    size_t read_bytes = length;
-    size_t zero_bytes = ROUND_UP(length, PGSIZE) - length;
+	void* save_addr = addr;
+	ASSERT(pg_round_down(addr) == addr);
+	off_t file_size = file_length(file);
+	
+	uint32_t read_bytes = file_size > length ? length : file_size;
+	uint32_t zero_bytes = pg_round_up(read_bytes) - read_bytes;
+	
+	while (read_bytes > 0 || zero_bytes > 0) {
+		size_t page_read_bytes = read_bytes < PGSIZE ? read_bytes : PGSIZE;
+		size_t page_zero_bytes = PGSIZE - page_read_bytes;
+		
+		struct load_args_tmp* args = (struct load_args_tmp*)malloc(sizeof(struct load_args_tmp));
+		args->file = file;
+		args->ofs = offset;
+		args->read_bytes = page_read_bytes;
+		args->zero_bytes = page_zero_bytes;
+		args->save_addr = addr;
+		args->total_length = length;
+		if (!vm_alloc_page_with_initializer (VM_FILE, addr, 
+					writable, lazy_load_segment_a, args))
+			PANIC("vm_alloc_failed\n");
 
-    struct file *reopen_file = file_reopen(file); // mmap용 새 파일 핸들
-    if (reopen_file == NULL)
-        return NULL;
-
-    void *va = addr;
-    while (read_bytes > 0 || zero_bytes > 0) {
-        // 이번 페이지에 읽어야 할 바이트 계산
-        size_t page_read_bytes = read_bytes < PGSIZE ? read_bytes : PGSIZE;
-        size_t page_zero_bytes = PGSIZE - page_read_bytes;
-
-        // lazy loading을 위한 aux 구조체 준비
-        struct lazy_load_arg *aux = malloc(sizeof(struct lazy_load_arg));
-        aux->file = reopen_file;
-        aux->ofs = offset;
-        aux->read_bytes = page_read_bytes;
-        aux->zero_bytes = page_zero_bytes;
-
-        // SPT에 페이지 등록
-        if (!vm_alloc_page_with_initializer(VM_FILE, va, writable, lazy_load_segment_a, aux))
-            return NULL;
-
-        // 다음 페이지로
-        read_bytes -= page_read_bytes;
-        zero_bytes -= page_zero_bytes;
-        va += PGSIZE;
-        offset += page_read_bytes;
-    }
-
-    return addr;
+		/* Advance. */
+		read_bytes -= page_read_bytes;
+		zero_bytes -= page_zero_bytes;
+		addr += PGSIZE;
+		offset += page_read_bytes;
+	}
+	return save_addr;
 }
 
 /* munmap 작업을 수행합니다 */
-void//[*]3-L
+void//[*]3-L / [*]3-B. 변경
 do_munmap (void *addr) {
-    struct thread *curr = thread_current();
-    struct page *page = spt_find_page(&curr->spt, addr);
+	struct supplemental_page_table* spt = &thread_current()->spt;
+	struct hash *h = &(spt->spt_hash);
+	struct page* new_page = spt_find_page(spt, addr);
 
-    while (page != NULL) {
-        struct file_page *file_page = &page->file;
-        struct lazy_load_arg *aux = (struct lazy_load_arg *) file_page->aux;
+	struct file* file = new_page->file.aux->file;
 
-        // dirty 플래그를 정확히 확인: 실제 pml4, frame 둘 다 dirty여야 write-back! -> ?? 일단 변경
-        if (pml4_is_dirty(curr->pml4, page->va)) {
-            file_write_at(aux->file, page->frame->kva, aux->read_bytes, aux->ofs); // [*]3-B. 변경
-
-            // dirty bit 클리어
-            pml4_set_dirty(curr->pml4, page->va, false);
-            pml4_set_dirty(curr->pml4, page->frame->kva, false);
-        }
-
-        // SPT에서 제거 (destroy도 함께)
-        vm_dealloc_page(page);
-        addr += PGSIZE;
-        if (page->operations != &file_ops) // [*]3-B. 추가 - munmap 범위 오버런 방지
-            break;
-        page = spt_find_page(&curr->spt, addr);
-    }
+	int page_cnt = (((uint64_t) ((new_page->file.aux->read_bytes)) + PGSIZE - 1) & ~PGMASK)/PGSIZE;
+	for(int i = page_cnt-1; i >= 0; i--){
+		struct page* page = spt_find_page(spt, addr+i*PGSIZE);
+		hash_delete(h, &page->hash_elem);
+		hash_page_destroy(&page->hash_elem, h->aux);
+	}
+	file_close(file);
 }
 
 //[*]3-L / [*]3-B. 전체적으로 변경
@@ -172,8 +158,13 @@ lazy_load_segment_a(struct page *page, void *aux) {
 
     uint8_t* kpage = (page->frame)->kva;
 	uint8_t* upage = page->va;
-	struct load_args_tmp* args = page->uninit.aux;
+	// struct load_args_tmp* args = page->uninit.aux;
 	
+    struct load_args_tmp* args = (struct load_args_tmp*) aux;
+    page->file.aux = malloc(sizeof(struct load_args_tmp));  // 💡 직접 보존용 복사
+    memcpy(page->file.aux, args, sizeof(struct load_args_tmp));
+    free(args);
+    
 	file_seek(args->file, args->ofs);
 	if (file_read (args->file, kpage, args->read_bytes) != (int) args->read_bytes) {
 		palloc_free_page (kpage);

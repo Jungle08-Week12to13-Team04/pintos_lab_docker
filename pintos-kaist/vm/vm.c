@@ -400,8 +400,7 @@ supplemental_page_table_copy (struct supplemental_page_table *dst UNUSED,
 void hash_page_destroy(struct hash_elem *e, void *aux)
 {
     struct page *page = hash_entry(e, struct page, hash_elem);
-    destroy(page);
-    free(page);
+    vm_dealloc_page(page); // [*]3-B. 변경
 }
 
 /* 보조 페이지 테이블이 보유한 자원을 해제합니다. */

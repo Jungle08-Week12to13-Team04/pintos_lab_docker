@@ -466,33 +466,46 @@ static struct file *find_file_by_fd(int fd)
 
 #ifdef VM
 
-void *//[*]3-L
+void *//[*]3-L / [*]3-B. 변경
 sys_mmap(void *addr, size_t length, int writable, int fd, off_t offset) {
-  // [중요!] mmap은 fd가 0/1 (stdin, stdout)이면 실패해야 함
-  if (fd == 0 || fd == 1 || length == 0 || addr == NULL || pg_ofs(addr) != 0)
-    return NULL;
+  struct thread* cur = thread_current();
+  struct file* file = cur->fd_table[fd];
+  
+  lock_acquire(&filesys_lock);
+  struct file* new_file = file_reopen(file);
+  lock_release(&filesys_lock);
 
-  struct file *file = find_file_by_fd(fd);
-  if (file == NULL)
+  if(file == NULL)
     return NULL;
-
-  // 파일 길이가 0이면 실패
-  if (file_length(file) == 0)
+  size_t file_size = file_length(file);
+  if(fd <= 2
+  || fd > cur->next_fd
+  || addr == NULL 
+  || pg_round_down(addr) != addr
+  || (length <= 0 || length >= KERN_BASE)
+  || pg_round_down(offset) != offset
+  || file_size <= 0
+  || file_size <= offset
+  || (addr >= KERN_BASE || addr+length >= KERN_BASE)
+  || (addr <=USER_STACK && addr >= USER_STACK - (1<<20))
+  || (addr + length <= USER_STACK && addr + length >= USER_STACK - (1<<20)))
     return NULL;
+  struct supplemental_page_table *spt = &cur->spt;
+  void * page_addr = addr;
 
-  void *ret = do_mmap(addr, length, writable, file, offset);
-  if (ret == NULL)
-    return NULL;
-
-  return ret;
+  while(page_addr < addr + length){ 
+    if(spt_find_page(spt, page_addr))
+      return NULL;
+    page_addr += PGSIZE;
+  }
+  return do_mmap(addr, length, writable, new_file, offset);
 }
 
-void//[*]3-L
+void//[*]3-L / [*]3-B. 변경
 sys_munmap(void *addr) {
-  if (addr == NULL || pg_ofs(addr) != 0)
-    return;
-
-  do_munmap(addr);
+  if (addr == pg_round_down(addr))
+    do_munmap(addr);
+  return;
 }
 
 #endif
