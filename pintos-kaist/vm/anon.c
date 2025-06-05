@@ -30,7 +30,7 @@ static const struct page_operations anon_ops = {
 };
 
 /* 익명 페이지에 대한 데이터를 초기화합니다 */
-// [*]3-L / [*]3-B
+// [*]3-L / [*]3-B. 전체적으로 변경
 void vm_anon_init(void) {
 	swap_disk = disk_get(1, 1);
 	disk_sector_t swap_disk_size = disk_size(swap_disk);
@@ -51,7 +51,7 @@ anon_initializer (struct page *page, enum vm_type type, void *kva) {
 }
 
 /* swap 디스크로부터 내용을 읽어 페이지를 swap in 합니다 */
-// [*]3-L / [*]3-B
+// [*]3-L / [*]3-B. 전체적으로 변경
 static bool anon_swap_in(struct page *page, void *kva) {
 	struct anon_page *anon_page = &page->anon;
 	
@@ -67,7 +67,7 @@ static bool anon_swap_in(struct page *page, void *kva) {
 
 
 /* swap 디스크에 내용을 써서 페이지를 swap out 합니다 */
-// [*]3-L / [*]3-B
+// [*]3-L / [*]3-B. 전체적으로 변경
 static bool anon_swap_out(struct page *page) {
 	struct anon_page *anon_page = &page->anon;
 
@@ -89,7 +89,7 @@ static bool anon_swap_out(struct page *page) {
 
 
 /* 익명 페이지를 파괴(destroy)합니다. PAGE는 호출자에 의해 해제됩니다. */
-// [*]3-L / [*]3-B
+// [*]3-L / [*]3-B. 전체적으로 변경
 static void anon_destroy(struct page *page) {
 	/* anon 페이지 파괴시 할당된 swap slot 반환 */
 	struct anon_page *anon_page = &page->anon;
