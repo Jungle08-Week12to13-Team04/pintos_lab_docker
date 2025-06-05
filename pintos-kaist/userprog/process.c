@@ -88,7 +88,8 @@ initd(void *f_name)
 // [*]3-B.
 struct fork_info {
 	struct thread *parent;
-	struct intr_frame *parent_tf;
+	// struct intr_frame *parent_tf;
+	struct intr_frame parent_tf; // [*]3-Q
 };
 
 
@@ -105,7 +106,10 @@ tid_t process_fork(const char *name, struct intr_frame *if_ UNUSED)
 	if (args == NULL)
 		return TID_ERROR;
 	args->parent = thread_current();
-	memcpy(&args->parent_tf, &if_, sizeof(struct intr_frame));
+	// memcpy(&args->parent_tf, &if_, sizeof(struct intr_frame));
+	// memcpy(&args->parent_tf, if_, sizeof(struct intr_frame)); // [*]3-Q
+	args->parent_tf = *if_; // [*]3-Q
+ 
 
 
 	tid_t tid = thread_create(name, PRI_DEFAULT, __do_fork, args);	//[*]3-B. if_->args
@@ -225,9 +229,11 @@ __do_fork(void *aux)
 
 	struct fork_info *args = (struct fork_info *)aux;
 	struct thread *parent = args->parent;
-	struct intr_frame *parent_tf = args->parent_tf;
+	// struct intr_frame *parent_tf = &args->parent_tf; @@@@@
 	struct thread *cur = thread_current();
 
+	// cur->tf = args->parent_tf;
+	memcpy(&cur->tf, &args->parent_tf, sizeof(struct intr_frame));
 
 	// [*]3-Q. fd_table 복사 전 명시적 초기화 실행!! -> 중요!
 	// fd_table 초기화 및 할당을 하지 않은 채 fd_table에 값을 대입하려 했기에 예외 동작 발생.
@@ -235,9 +241,9 @@ __do_fork(void *aux)
 	if (cur->fd_table == NULL)
 		goto error;
 
-	cur->next_fd = 2; 
+	cur->next_fd = 2;
 
-	memcpy(&cur->tf, parent_tf, sizeof(struct intr_frame));
+	// memcpy(&cur->tf, parent_tf, sizeof(struct intr_frame)); @@@@@
 	palloc_free_page(args);  // 메모리 해제
 
 
@@ -275,7 +281,8 @@ __do_fork(void *aux)
 	
 	// [*]3-Q
 	for (int i = 2; i < OPEN_LIMIT; i++) {
-		struct file *parent_file = cur->parent->fd_table[i];
+		// struct file *parent_file = cur->parent->fd_table[i];
+		struct file *parent_file = parent->fd_table[i];  // [*]3-Q. fork_info 구조체에서 받은 부모 쓰기
 		if (parent_file != NULL){
 			struct file *child_file = file_duplicate(parent_file);
 			if (child_file == NULL){
@@ -438,6 +445,11 @@ int process_wait(tid_t child_tid) // UNUSED 지움
 void process_exit(void)
 {
 	struct thread *cur = thread_current(); // 현재 종료 중인 스레드
+
+	// [*]3-Q
+	#ifdef VM
+		vm_destroy(&cur->spt);  // ✅ 이게 있어야 destroy가 호출됨
+	#endif
 
 	/* TODO: Your code goes here.
 	 * TODO: Implement process termination message (see
@@ -894,7 +906,7 @@ install_page(void *upage, void *kpage, bool writable)
  * If you want to implement the function for only project 2, implement it on the
  * upper block. */
 
-static bool
+bool
 lazy_load_segment(struct page *page, void *aux)
 {
 	/* TODO: Load the segment from the file */

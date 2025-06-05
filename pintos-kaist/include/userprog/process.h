@@ -9,7 +9,7 @@ int process_exec (void *f_name);
 int process_wait (tid_t);
 void process_exit (void);
 void process_activate (struct thread *next);
-
+bool lazy_load_segment(struct page *page, void *aux);
 void argument_stack(char **parse, int count, void **rsp); //[*]3-B. 추가
 
 #endif /* userprog/process.h */

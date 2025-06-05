@@ -271,13 +271,19 @@ sys_open(const char *file)
 void 
 sys_close(int fd){
   struct thread *cur = thread_current ();
-  if (fd < 2 || fd >= OPEN_LIMIT || cur->fd_table[fd] == NULL)
+  if (fd < 2 || fd >= OPEN_LIMIT || cur->fd_table[fd] == NULL) // 유효 fd 범위 check
     return;
-  cur->fd_table[fd] = NULL;
+
+  struct file *f = cur->fd_table[fd]; // 먼저 포인터를 저장
+  if (f == NULL)
+    return;
+  
+  cur->fd_table[fd] = NULL; // 슬롯을 비워줌
   
   lock_acquire(&filesys_lock);
-  file_close(cur->fd_table[fd]);
-    lock_release(&filesys_lock);
+  // file_close(cur->fd_table[fd]);
+  file_close(f); // 저장해둔 포인터로 close 실행
+  lock_release(&filesys_lock);
 }
 
 //[*]3-L process.c와의 씽크를 위
@@ -416,11 +422,15 @@ void check_address(const void *addr) {
 
   // 변경된 부분: 예약된 페이지는 허용
 
-  #ifdef VM
-  if (pml4_get_page(t->pml4, addr) == NULL &&
-      spt_find_page(&t->spt, addr) == NULL)
+  // #ifdef VM
+  // if (pml4_get_page(t->pml4, addr) == NULL &&
+  //     spt_find_page(&t->spt, addr) == NULL)
+  //   sys_exit(-1);
+  // #endif
+
+  struct page *page = spt_find_page(&thread_current()->spt, addr);
+  if (page == NULL)
     sys_exit(-1);
-  #endif
 }
 
 
@@ -440,12 +450,17 @@ void check_buffer(void *buffer, unsigned size) {
 /* [*]3-Q. 쓰기여부 검사 함수 추가! */
 static void
 check_writable(void *addr){
-    struct thread *curr = thread_current();
-    if (addr == NULL || !is_user_vaddr(addr))
-        sys_exit(-1);
-    struct page *page = spt_find_page(&curr->spt, addr);
-    if (page == NULL)
-        sys_exit(-1);
+    // struct thread *curr = thread_current();
+    // if (addr == NULL || !is_user_vaddr(addr))
+    //     sys_exit(-1);
+    // struct page *page = spt_find_page(&curr->spt, addr);
+    // if (page == NULL)
+    //     sys_exit(-1);
+    // if (!page->writable)
+    //     sys_exit(-1);
+
+    check_address(addr);  // 위에서 SPT 검사는 이미 했음
+    struct page *page = spt_find_page(&thread_current()->spt, addr);
     if (!page->writable)
         sys_exit(-1);
 }

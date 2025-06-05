@@ -37,6 +37,23 @@
         "gdt.h": "c",
         "exception.h": "c",
         "inspect.h": "c",
-        "round.h": "c"
+        "round.h": "c",
+        "process.h": "c",
+        "cmath": "c",
+        "cstddef": "c",
+        "deque": "c",
+        "string": "c",
+        "unordered_map": "c",
+        "vector": "c",
+        "exception": "c",
+        "memory": "c",
+        "memory_resource": "c",
+        "optional": "c",
+        "string_view": "c",
+        "system_error": "c",
+        "algorithm": "c",
+        "limits": "c",
+        "streambuf": "c",
+        "thread": "c"
     }
 }

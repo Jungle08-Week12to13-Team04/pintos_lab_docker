@@ -9,6 +9,7 @@
 #include "vm/vm.h"
 #include "vm/inspect.h"
 #include "filesys/file.h"
+#include "userprog/process.h"
 /* 각 서브시스템의 초기화 코드를 호출하여 가상 메모리 서브시스템을 초기화합니다. */
 
 struct disk *swap_disk;//[*]3-L
@@ -354,7 +355,7 @@ supplemental_page_table_copy (struct supplemental_page_table *dst UNUSED,
         // }
 
 		if (type == VM_UNINIT)
-	{
+		{
 		vm_initializer *init = src_page->uninit.init;
 		void *src_aux = src_page->uninit.aux;
 
@@ -365,18 +366,42 @@ supplemental_page_table_copy (struct supplemental_page_table *dst UNUSED,
 		copy_aux->ofs = src_lazy->ofs;
 		copy_aux->read_bytes = src_lazy->read_bytes;
 		copy_aux->zero_bytes = src_lazy->zero_bytes;
-
 		copy_aux->file = file_reopen(src_lazy->file);
 		if (copy_aux->file == NULL) {
 			free(copy_aux);
 			return false;
 		}
 
+		// if (!vm_alloc_page_with_initializer(VM_ANON, upage, writable, init, copy_aux))
+		// 	return false;
 		if (!vm_alloc_page_with_initializer(VM_ANON, upage, writable, init, copy_aux))
 			return false;
 
 		continue;
-	}
+		}
+
+
+        /* [*]3-Q. VM_FILE 처리 (기존 코드에서는 빠져 있었던 블록) */
+        if (type == VM_FILE) 
+		{
+            struct lazy_load_arg *src_aux = (struct lazy_load_arg *)src_page->file.aux;
+            struct lazy_load_arg *copy_aux = malloc(sizeof(struct lazy_load_arg));
+            if (copy_aux == NULL) return false;
+
+            copy_aux->ofs = src_aux->ofs;
+            copy_aux->read_bytes = src_aux->read_bytes;
+            copy_aux->zero_bytes = src_aux->zero_bytes;
+            copy_aux->file = file_reopen(src_aux->file);
+            if (copy_aux->file == NULL) {
+                free(copy_aux);
+                return false;
+            }
+
+            if (!vm_alloc_page_with_initializer(VM_FILE, upage, writable, lazy_load_segment, copy_aux))
+                return false;
+
+            continue;
+        }
 
 
         /* 2) type이 uninit이 아니면 */
@@ -435,4 +460,9 @@ page_less(const struct hash_elem *a_, const struct hash_elem *b_, void *aux UNUS
     const struct page *b = hash_entry(b_, struct page, hash_elem);
 
     return a->va < b->va;
+}
+
+// [*]3-Q
+void vm_destroy(struct supplemental_page_table *spt) {
+    hash_destroy(&spt->spt_hash, hash_page_destroy);
 }

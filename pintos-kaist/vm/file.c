@@ -14,7 +14,7 @@
 static bool file_backed_swap_in (struct page *page, void *kva);//[*]3-L
 static bool file_backed_swap_out (struct page *page);//[*]3-L
 static void file_backed_destroy (struct page *page);//[*]3-L
-static bool lazy_load_segment_a(struct page *page, void *aux);//[*]3-L
+// static bool lazy_load_segment_a(struct page *page, void *aux);//[*]3-L
 
 /* 이 구조체는 수정하지 마십시오 */
 static const struct page_operations file_ops = {
@@ -95,8 +95,15 @@ static void//[*]3-L
 file_backed_destroy(struct page *page) {
     struct file_page *file_page = &page->file;
     struct lazy_load_arg *aux = (struct lazy_load_arg *) file_page->aux;
-    if (aux != NULL)
-        free(aux);
+    // if (aux != NULL)
+    //     free(aux);
+
+    // [*]3-Q 반드시 file_close 추가
+	if (aux != NULL) {
+		if (aux->file != NULL)
+			file_close(aux->file);  // 메모리 누수 방지 핵심
+		free(aux);
+	}        
 }
 
 
@@ -125,7 +132,7 @@ do_mmap (void *addr, size_t length, int writable, struct file *file, off_t offse
         aux->zero_bytes = page_zero_bytes;
 
         // SPT에 페이지 등록
-        if (!vm_alloc_page_with_initializer(VM_FILE, va, writable, lazy_load_segment_a, aux))
+        if (!vm_alloc_page_with_initializer(VM_FILE, va, writable, lazy_load_segment, aux))
             return NULL;
 
         // 다음 페이지로
@@ -167,18 +174,18 @@ do_munmap (void *addr) {
 }
 
 //[*]3-L / [*]3-B. 전체적으로 변경
-static bool
-lazy_load_segment_a(struct page *page, void *aux) {
+// static bool
+// lazy_load_segment_a(struct page *page, void *aux) {
 
-    uint8_t* kpage = (page->frame)->kva;
-	uint8_t* upage = page->va;
-	struct load_args_tmp* args = page->uninit.aux;
+//     uint8_t* kpage = (page->frame)->kva;
+// 	uint8_t* upage = page->va;
+// 	struct load_args_tmp* args = page->uninit.aux;
 	
-	file_seek(args->file, args->ofs);
-	if (file_read (args->file, kpage, args->read_bytes) != (int) args->read_bytes) {
-		palloc_free_page (kpage);
-		return false;
-	}
-	memset(kpage + args->read_bytes, 0, args->zero_bytes);
-	return true;
-}
+// 	file_seek(args->file, args->ofs);
+// 	if (file_read (args->file, kpage, args->read_bytes) != (int) args->read_bytes) {
+// 		palloc_free_page (kpage);
+// 		return false;
+// 	}
+// 	memset(kpage + args->read_bytes, 0, args->zero_bytes);
+// 	return true;
+// }

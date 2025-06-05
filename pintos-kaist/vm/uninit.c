@@ -66,5 +66,15 @@ uninit_destroy (struct page *page) {
 	struct uninit_page *uninit UNUSED = &page->uninit;
 	/* TODO: 이 함수를 구현하세요.
  	 * TODO: 할 일이 없다면 그냥 return 하세요. */
-	free(page->uninit.aux); //[*]3-B. 추가
+	// free(page->uninit.aux); //[*]3-B. 추가
+	
+	// [*]3-Q 
+	if (uninit->aux != NULL) {
+		struct lazy_load_arg *arg = (struct lazy_load_arg *)uninit->aux;
+
+		// [!] 파일이 존재하면 닫기
+		if (arg->file != NULL)
+			file_close(arg->file);  // 중요
+		free(uninit->aux);
+	}
 }
