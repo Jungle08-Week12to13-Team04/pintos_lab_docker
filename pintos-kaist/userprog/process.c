@@ -904,6 +904,14 @@ lazy_load_segment(struct page *page, void *aux)
 	// [*]3-B. 실행 파일의 내용을 페이지로 로딩하는 함수이며 첫번째 page fault가 발생할 때 호출됨
 	// 이 함수가 호출되기 이전에 물리 프레임 매핑이 진행되므로, 물리 프레임에 내용을 로딩하는 작업만 하면 됨
 	struct lazy_load_arg *lazy_load_arg = (struct lazy_load_arg *)aux;
+    // printf("[debug] lazy_load_segment called: va=%p, marker=%d\n", page->va, lazy_load_arg->marker);
+
+	/* [*]3-Q. page의 marker가 CODE영역이라면 쓰기 금지로 설정하기 */
+	// if (lazy_load_arg->marker == VM_MARKER_CODE) {
+	// 	page->writable = false;
+	    // printf("[debug] code page, set writable = false at va=%p\n", page->va);
+	// }
+
 
 	file_seek(lazy_load_arg->file, lazy_load_arg->ofs); // 파일의 position을 ofs으로 지정
 	// 파일을 read_bytes만큼 물리 프레임에 읽어 들임
@@ -938,6 +946,7 @@ static bool
 load_segment(struct file *file, off_t ofs, uint8_t *upage,
 			 uint32_t read_bytes, uint32_t zero_bytes, bool writable)
 {
+	// enum vm_marker marker = VM_MARKER_CODE; // [*]3-Q
 	ASSERT((read_bytes + zero_bytes) % PGSIZE == 0);
 	ASSERT(pg_ofs(upage) == 0);
 	ASSERT(ofs % PGSIZE == 0);
@@ -961,6 +970,7 @@ load_segment(struct file *file, off_t ofs, uint8_t *upage,
 		lazy_load_arg->ofs = ofs;					 // 이 페이지에서 읽기 시작할 위치
 		lazy_load_arg->read_bytes = page_read_bytes; // 이 페이지에서 읽어야 하는 바이트 수
 		lazy_load_arg->zero_bytes = page_zero_bytes; // 이 페이지에서 read_bytes만큼 읽고 공간이 남아 0으로 채워야 하는 바이트 수
+		// lazy_load_arg->marker = marker; // [*]3-Q. 쓰기 보호 설정 및 페이지의 용도(code인지 data인지 등등) 구분용 marker 정보
 		// vm_alloc_page_with_initializer를 호출하여 대기 중인 객체를 생성
 
 		if (!vm_alloc_page_with_initializer(VM_ANON, upage,

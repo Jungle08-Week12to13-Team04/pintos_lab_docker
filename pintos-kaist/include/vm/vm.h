@@ -26,6 +26,14 @@ enum vm_type {
 	VM_MARKER_END = (1 << 31),
 };
 
+
+/* [*]3-Q. vm_marker를 통한 page 용도 구분 */
+enum vm_marker {
+	VM_MARKER_CODE = 0,
+	VM_MARKER_DATA = 1,
+	VM_MAKRER_STACK = 2
+};
+
 #include "vm/uninit.h"
 #include "vm/anon.h"
 #include "vm/file.h"
@@ -92,6 +100,7 @@ struct lazy_load_arg {
     off_t ofs;             // 해당 파일 내 offset (시작 위치)
     size_t read_bytes;     // 파일에서 읽을 바이트 수
     size_t zero_bytes;     // 0으로 채워야 할 바이트 수
+	int marker;            // VM_MARKER_CODE, VM_MARKER_DATA
 };
 
 #define swap_in(page, v) (page)->operations->swap_in ((page), v)

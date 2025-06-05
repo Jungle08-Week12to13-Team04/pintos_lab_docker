@@ -19,6 +19,10 @@
 
 typedef int pid_t;
 
+/* [*]3-Q. 쓰기 검사 함수 선언! */
+static void check_writable(void *addr);
+
+
 // 외부 함수 선언 (암시적 선언 오류 방지)
 void power_off(void);
 int input_getc(void);
@@ -308,9 +312,13 @@ sys_create (const char *file, unsigned initial_size) {
 int
 sys_read(int fd, void *buffer, unsigned size)
 {
-  // check_address(buffer);
+  // [*]3-Q. 쓰기 가능 여부 검사 먼저!
+  // buffer 주소 유효성 체크 (항상 가장 먼저!)
+  check_writable(buffer);
+  check_address(buffer);
 
-  check_buffer(buffer, size);
+  ////// 
+  // check_buffer(buffer, size);
   
   // 읽은 바이트 수 저장할 변수
   int read_byte = 0;
@@ -493,6 +501,19 @@ sys_munmap(void *addr) {
     return;
 
   do_munmap(addr);
+}
+
+/* [*]3-Q. 쓰기여부 검사 함수 추가! */
+static void
+check_writable(void *addr){
+    struct thread *curr = thread_current();
+    if (addr == NULL || !is_user_vaddr(addr))
+        sys_exit(-1);
+    struct page *page = spt_find_page(&curr->spt, addr);
+    if (page == NULL)
+        sys_exit(-1);
+    if (!page->writable)
+        sys_exit(-1);
 }
 
 #endif
