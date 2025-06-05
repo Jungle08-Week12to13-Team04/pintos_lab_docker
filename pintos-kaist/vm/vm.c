@@ -181,11 +181,12 @@ vm_get_frame (void) {
   if (kva == NULL) {
     struct frame *victim = vm_evict_frame();
     kva = victim->kva;
+
+	// [*]3-B. 추가
+	if (victim->page != NULL)
+        victim->page->frame = NULL;
     free(victim);
   }
-
-
-  
 
   struct frame *frame = malloc(sizeof(struct frame));
   if (frame == NULL) PANIC("frame alloc failed");
@@ -296,9 +297,12 @@ vm_do_claim_page (struct page *page) {
 	/* TODO: 페이지의 VA를 프레임의 PA에 매핑하기 위한 페이지 테이블 엔트리를 삽입합니다. */
 	// [*]3-B. 가상 주소와 물리 주소를 매핑
 	bool writable = page->writable;
-	// int check = pml4_set_page(thread_current()->pml4, page->va, frame->kva, writable);
-	bool success = pml4_set_page(thread_current()->pml4, page->va, frame->kva, writable);
-    // printf("[debug] claim page: va=%p, writable=%d, pml4_set_page success=%d\n", page->va, writable, success);
+
+	// pml4_set_page() 실패 시 처리 추가
+	if (! pml4_set_page(thread_current()->pml4, page->va, frame->kva, writable)){
+		free(frame);
+		return false;
+	}
 
 	return swap_in (page, frame->kva);
 }

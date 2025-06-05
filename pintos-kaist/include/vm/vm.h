@@ -43,6 +43,7 @@ enum vm_marker {
 
 struct page_operations;
 struct thread;
+struct file_page;
 
 #define VM_TYPE(type) ((type) & 7)
 
@@ -65,7 +66,7 @@ struct page {
 	union {
 		struct uninit_page uninit;
 		struct anon_page anon;
-		struct file_page file;
+		struct file_page file; //[*]3-B. 포인터 형식으로 변경 필요??
 #ifdef EFILESYS
 		struct page_cache page_cache;
 #endif
