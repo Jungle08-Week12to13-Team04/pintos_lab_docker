@@ -149,6 +149,7 @@ syscall_handler (struct intr_frame *f UNUSED) {
     f->R.rax = sys_wait((pid_t)f->R.rdi);
     break;
 
+  #ifdef VM
   //[*]3-L
   case SYS_MMAP:
     f->R.rax = (uint64_t)sys_mmap((void *)f->R.rdi, (size_t)f->R.rsi, (int)f->R.rdx, (int)f->R.r10, (off_t)f->R.r8);
@@ -158,6 +159,8 @@ syscall_handler (struct intr_frame *f UNUSED) {
   case SYS_MUNMAP:
     sys_munmap((void *)f->R.rdi);
     break;
+  #endif
+
   default:
     thread_exit ();
     break;
@@ -461,6 +464,7 @@ static struct file *find_file_by_fd(int fd)
 }
 
 
+#ifdef VM
 
 void *//[*]3-L
 sys_mmap(void *addr, size_t length, int writable, int fd, off_t offset) {
@@ -490,3 +494,5 @@ sys_munmap(void *addr) {
 
   do_munmap(addr);
 }
+
+#endif
