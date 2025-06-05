@@ -894,31 +894,26 @@ install_page(void *upage, void *kpage, bool writable)
  * If you want to implement the function for only project 2, implement it on the
  * upper block. */
 
-static bool
+bool
 lazy_load_segment(struct page *page, void *aux)
 {
-	/* TODO: Load the segment from the file */
-	/* TODO: This called when the first page fault occurs on address VA. */
-	/* TODO: VA is available when calling this function. */\
-	
-	// [*]3-B. 실행 파일의 내용을 페이지로 로딩하는 함수이며 첫번째 page fault가 발생할 때 호출됨
-	// 이 함수가 호출되기 이전에 물리 프레임 매핑이 진행되므로, 물리 프레임에 내용을 로딩하는 작업만 하면 됨
-	struct lazy_load_arg *lazy_load_arg = (struct lazy_load_arg *)aux;
+    struct lazy_load_arg *lazy_load_arg = (struct lazy_load_arg *)aux;
 
-	file_seek(lazy_load_arg->file, lazy_load_arg->ofs); // 파일의 position을 ofs으로 지정
-	// 파일을 read_bytes만큼 물리 프레임에 읽어 들임
-	if (file_read(lazy_load_arg->file, page->frame->kva, lazy_load_arg->read_bytes) != (int)(lazy_load_arg->read_bytes))
-	{
-		palloc_free_page(page->frame->kva);
-		return false;
-	}
-	// 다 읽은 지점부터 zero_bytes만큼 0으로 채움
-	memset(page->frame->kva + lazy_load_arg->read_bytes, 0, lazy_load_arg->zero_bytes);
+    // 파일에서 정확한 위치(offset)부터 read_bytes만큼 읽어오기
+    if (file_read_at(lazy_load_arg->file, page->frame->kva,
+                      lazy_load_arg->read_bytes, lazy_load_arg->ofs)
+        != (int)(lazy_load_arg->read_bytes)) {
 
-	return true;
+        return false;
+    }
 
-	
+    // 나머지는 0으로 채우기
+    memset(page->frame->kva + lazy_load_arg->read_bytes, 0,
+           lazy_load_arg->zero_bytes);
+
+    return true;
 }
+
 
 /* Loads a segment starting at offset OFS in FILE at address
  * UPAGE.  In total, READ_BYTES + ZERO_BYTES bytes of virtual

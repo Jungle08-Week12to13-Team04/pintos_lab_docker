@@ -30,15 +30,18 @@ vm_file_init (void) {
 }
 
 /* 파일을 기반으로 하는 페이지(file-backed page)를 초기화합니다 */
-bool//[*]3-L
-file_backed_initializer (struct page *page, enum vm_type type, void *kva) {
+bool file_backed_initializer (struct page *page, enum vm_type type, void *kva) {
     struct file_page *file_page = &page->file;
-    page->operations = &file_ops; // 반드시 file_ops 지정
-    (void)file_page;
+    page->operations = &file_ops; // file_ops 반드시 지정!
+
+    //이 부분이 반드시 필요;;
+    file_page->aux = page->uninit.aux;
+
     (void)type;
     (void)kva;
     return true;
 }
+
 
 
 
@@ -101,34 +104,32 @@ file_backed_destroy(struct page *page) {
 
 
 /* mmap 작업을 수행합니다 */
-void *//[*]3-L
-do_mmap (void *addr, size_t length, int writable, struct file *file, off_t offset) {
-    // 페이지 크기로 반올림
-    size_t read_bytes = length;
-    size_t zero_bytes = ROUND_UP(length, PGSIZE) - length;
-
-    struct file *reopen_file = file_reopen(file); // mmap용 새 파일 핸들
+void *
+do_mmap(void *addr, size_t length, int writable, struct file *file, off_t offset) {
+    struct file *reopen_file = file_reopen(file);
     if (reopen_file == NULL)
         return NULL;
 
+    // 실제로 읽을 수 있는 파일의 남은 바이트 계산
+    size_t file_len = file_length(reopen_file);
+    size_t remain = (offset < file_len) ? (file_len - offset) : 0;
+    size_t read_bytes = (remain < length) ? remain : length;
+    size_t zero_bytes = ROUND_UP(length, PGSIZE) - read_bytes;
+
     void *va = addr;
     while (read_bytes > 0 || zero_bytes > 0) {
-        // 이번 페이지에 읽어야 할 바이트 계산
-        size_t page_read_bytes = read_bytes < PGSIZE ? read_bytes : PGSIZE;
+        size_t page_read_bytes = (read_bytes < PGSIZE) ? read_bytes : PGSIZE;
         size_t page_zero_bytes = PGSIZE - page_read_bytes;
 
-        // lazy loading을 위한 aux 구조체 준비
         struct lazy_load_arg *aux = malloc(sizeof(struct lazy_load_arg));
         aux->file = reopen_file;
         aux->ofs = offset;
         aux->read_bytes = page_read_bytes;
         aux->zero_bytes = page_zero_bytes;
 
-        // SPT에 페이지 등록
-        if (!vm_alloc_page_with_initializer(VM_FILE, va, writable, lazy_load_segment_a, aux))
+        if (!vm_alloc_page_with_initializer(VM_FILE, va, writable, lazy_load_segment, aux))
             return NULL;
 
-        // 다음 페이지로
         read_bytes -= page_read_bytes;
         zero_bytes -= page_zero_bytes;
         va += PGSIZE;
@@ -138,9 +139,9 @@ do_mmap (void *addr, size_t length, int writable, struct file *file, off_t offse
     return addr;
 }
 
+
 /* munmap 작업을 수행합니다 */
-void//[*]3-L
-do_munmap (void *addr) {
+void do_munmap(void *addr) {
     struct thread *curr = thread_current();
     struct page *page = spt_find_page(&curr->spt, addr);
 
@@ -148,37 +149,23 @@ do_munmap (void *addr) {
         struct file_page *file_page = &page->file;
         struct lazy_load_arg *aux = (struct lazy_load_arg *) file_page->aux;
 
-        // dirty 플래그를 정확히 확인: 실제 pml4, frame 둘 다 dirty여야 write-back! -> ?? 일단 변경
-        if (pml4_is_dirty(curr->pml4, page->va)) {
-            file_write_at(aux->file, page->frame->kva, aux->read_bytes, aux->ofs); // [*]3-B. 변경
-
-            // dirty bit 클리어
+        // dirty 플래그를 확인하여 write-back
+        if (pml4_is_dirty(curr->pml4, page->va) || pml4_is_dirty(curr->pml4, page->frame->kva)) {
+            file_write_at(aux->file, page->frame->kva, aux->read_bytes, aux->ofs);
             pml4_set_dirty(curr->pml4, page->va, false);
             pml4_set_dirty(curr->pml4, page->frame->kva, false);
         }
 
-        // SPT에서 제거 (destroy도 함께)
+
+        pml4_clear_page(curr->pml4, page->va);
+
+        // SPT에서 제거
         vm_dealloc_page(page);
+
+        // 다음 페이지
         addr += PGSIZE;
-        if (page->operations != &file_ops) // [*]3-B. 추가 - munmap 범위 오버런 방지
+        if (page->operations != &file_ops)
             break;
         page = spt_find_page(&curr->spt, addr);
     }
-}
-
-//[*]3-L / [*]3-B. 전체적으로 변경
-static bool
-lazy_load_segment_a(struct page *page, void *aux) {
-
-    uint8_t* kpage = (page->frame)->kva;
-	uint8_t* upage = page->va;
-	struct load_args_tmp* args = page->uninit.aux;
-	
-	file_seek(args->file, args->ofs);
-	if (file_read (args->file, kpage, args->read_bytes) != (int) args->read_bytes) {
-		palloc_free_page (kpage);
-		return false;
-	}
-	memset(kpage + args->read_bytes, 0, args->zero_bytes);
-	return true;
 }
