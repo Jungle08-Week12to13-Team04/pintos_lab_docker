@@ -14,7 +14,8 @@
 static bool file_backed_swap_in (struct page *page, void *kva);//[*]3-L
 static bool file_backed_swap_out (struct page *page);//[*]3-L
 static void file_backed_destroy (struct page *page);//[*]3-L
-bool lazy_load_segment(struct page *page, void *aux);//[*]3-L
+
+static bool lazy_load_segment_a(struct page *page, void *aux);//[*]3-L
 
 /* 이 구조체는 수정하지 마십시오 */
 static const struct page_operations file_ops = {
@@ -125,8 +126,7 @@ do_mmap (void *addr, size_t length, int writable, struct file *file, off_t offse
         aux->zero_bytes = page_zero_bytes;
 
         // SPT에 페이지 등록
-        if (!vm_alloc_page_with_initializer(VM_FILE, va, writable, lazy_load_segment, aux))
-            return NULL;
+        if (!vm_alloc_page_with_initializer(VM_FILE, va, writable, lazy_load_segment_a, aux))
 
         // 다음 페이지로
         read_bytes -= page_read_bytes;
@@ -165,8 +165,8 @@ do_munmap (void *addr) {
 }
 
 //[*]3-L
-bool
-lazy_load_segment(struct page *page, void *aux) {
+static bool
+lazy_load_segment_a(struct page *page, void *aux) {
     struct lazy_load_arg *args = (struct lazy_load_arg *)aux;
 
     struct file *file = args->file;
