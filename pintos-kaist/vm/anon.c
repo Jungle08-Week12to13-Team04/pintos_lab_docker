@@ -63,6 +63,7 @@ static bool anon_swap_in(struct page *page, void *kva) {
     lock_acquire(&swap_table.lock);
     bitmap_set(swap_table.bit_map, swap_idx, false);
     lock_release(&swap_table.lock);
+	anon_page->swap_idx = (size_t)-1;
     return true;
 }
 
@@ -85,6 +86,7 @@ static bool anon_swap_out(struct page *page) {
         disk_write(swap_disk, swap_idx * SECTORS_PER_PAGE + i, page->frame->kva + DISK_SECTOR_SIZE * i);
     }
     // PML4에서 페이지 clear 등 필요한 처리
+	pml4_clear_page(thread_current()->pml4, page->va); 
     page->frame = NULL;
     return true;
 }
