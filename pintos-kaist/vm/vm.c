@@ -4,6 +4,7 @@
 #include "lib/kernel/hash.h" 
 #include "threads/thread.h"
 #include "threads/vaddr.h" 
+#include "userprog/process.h" 
 
 #include "threads/malloc.h"
 #include "vm/vm.h"

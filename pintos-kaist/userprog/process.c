@@ -19,7 +19,6 @@
 #include "threads/vaddr.h"
 #include "intrinsic.h"
 #ifdef VM
-#include "vm/vm.h"
 #endif
 
 #define ARGUMENT_LIMIT 64 // 명령행으로 받을 인자의 최댓값
@@ -476,7 +475,19 @@ process_cleanup(void)
 	struct thread *curr = thread_current();
 
 #ifdef VM
+
+	struct hash_iterator i;
+
+    /* PML4 파괴 전에, 파일 매핑된 페이지를 모두 do_munmap으로 언맵 */
+    hash_first(&i, &curr->spt.spt_hash);
+    while (hash_next(&i)) {
+        struct page *p = hash_entry(hash_cur(&i), struct page, hash_elem);
+        if (p->operations->type == VM_FILE) {
+            do_munmap(p->va);
+        }
+    }
 	supplemental_page_table_kill(&curr->spt);
+	
 #endif
 
 	uint64_t *pml4;

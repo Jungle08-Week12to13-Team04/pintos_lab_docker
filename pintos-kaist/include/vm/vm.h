@@ -74,7 +74,6 @@ struct frame {
 };
 
 
-
 /* 페이지 연산을 위한 함수 테이블입니다.
  * 이는 C에서 "인터페이스"를 구현하는 한 가지 방법입니다.
  * 메서드 테이블을 구조체의 멤버에 넣고,
@@ -84,14 +83,6 @@ struct page_operations {
 	bool (*swap_out) (struct page *);
 	void (*destroy) (struct page *);
 	enum vm_type type;
-};
-
-// [*]3-B. 지연 로딩(lazy loading) 시에 필요한 정보를 넘기기 위한 aux 포인터로 사용됨 (파일 매핑 관련 정보)
-struct lazy_load_arg {
-    struct file *file;     // 로드할 대상 파일 포인터
-    off_t ofs;             // 해당 파일 내 offset (시작 위치)
-    size_t read_bytes;     // 파일에서 읽을 바이트 수
-    size_t zero_bytes;     // 0으로 채워야 할 바이트 수
 };
 
 #define swap_in(page, v) (page)->operations->swap_in ((page), v)
