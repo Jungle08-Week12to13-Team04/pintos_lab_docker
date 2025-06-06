@@ -14,6 +14,8 @@ static bool anon_swap_in (struct page *page, void *kva);
 static bool anon_swap_out (struct page *page);
 static void anon_destroy (struct page *page);
 
+#define SECTORS_PER_PAGE 8
+
 // [*]3-B. swap table 양식 변경
 struct swap_table {
 	struct lock lock;              /* Mutual exclusion. */
@@ -32,69 +34,66 @@ static const struct page_operations anon_ops = {
 /* 익명 페이지에 대한 데이터를 초기화합니다 */
 // [*]3-L / [*]3-B. 전체적으로 변경
 void vm_anon_init(void) {
-	swap_disk = disk_get(1, 1);
-	disk_sector_t swap_disk_size = disk_size(swap_disk);
-	uint64_t bit_cnt = swap_disk_size/8;               
-	swap_table.bit_map = bitmap_create(bit_cnt);
-	ASSERT(swap_table.bit_map);
-
-	lock_init(&swap_table.lock);
+    swap_disk = disk_get(1, 1);
+    size_t disk_sectors = disk_size(swap_disk);
+    size_t swap_slot_cnt = disk_sectors / SECTORS_PER_PAGE;
+    swap_table.bit_map = bitmap_create(swap_slot_cnt);
+    ASSERT(swap_table.bit_map);
+    lock_init(&swap_table.lock);
 }
 
 /* 파일 매핑(file mapping)을 초기화합니다 */
-bool
-anon_initializer (struct page *page, enum vm_type type, void *kva) {
-	/* 핸들러를 설정합니다 */
-	page->operations = &anon_ops;
-	struct anon_page *anon_page = &page->anon;
-	anon_page->swap_idx = -1;
+bool anon_initializer(struct page *page, enum vm_type type, void *kva) {
+    page->operations = &anon_ops;
+    struct anon_page *anon_page = &page->anon;
+    anon_page->swap_idx = (size_t)-1; // 아직 스왑 아님
+    return true;
 }
 
 /* swap 디스크로부터 내용을 읽어 페이지를 swap in 합니다 */
 // [*]3-L / [*]3-B. 전체적으로 변경
 static bool anon_swap_in(struct page *page, void *kva) {
-	struct anon_page *anon_page = &page->anon;
-	
-	size_t swap_idx = anon_page->swap_idx;
-	size_t bitmap_idx = swap_idx / 8;
-	int PGSIZE_d8 = PGSIZE/8;
-	for(int i = 0; i < 8; i++){
-		disk_read(swap_disk, swap_idx+i, page->frame->kva + PGSIZE_d8 * i);
-	}
-	bitmap_set_multiple(swap_table.bit_map, bitmap_idx, 1, false);
-	return true;
+    struct anon_page *anon_page = &page->anon;
+    size_t swap_idx = anon_page->swap_idx;
+
+    for (int i = 0; i < SECTORS_PER_PAGE; i++) {
+        disk_read(swap_disk, swap_idx * SECTORS_PER_PAGE + i, kva + DISK_SECTOR_SIZE * i);
+    }
+    // swap slot 반환
+    lock_acquire(&swap_table.lock);
+    bitmap_set(swap_table.bit_map, swap_idx, false);
+    lock_release(&swap_table.lock);
+    return true;
 }
 
 
 /* swap 디스크에 내용을 써서 페이지를 swap out 합니다 */
 // [*]3-L / [*]3-B. 전체적으로 변경
 static bool anon_swap_out(struct page *page) {
-	struct anon_page *anon_page = &page->anon;
+    struct anon_page *anon_page = &page->anon;
 
-	lock_acquire (&swap_table.lock);
-	size_t swap_idx = 8 * bitmap_scan_and_flip (swap_table.bit_map, 0, 1, false);
-	anon_page->swap_idx = swap_idx;
-	lock_release (&swap_table.lock);
-	
-	int PGSIZE_d8 = PGSIZE/8;
-	for(int i = 0; i < 8; i++){
-		disk_write(swap_disk, swap_idx+i, page->frame->kva + PGSIZE_d8 * i);
-	}
-	
-	pml4_clear_page(thread_current()->pml4, page->va);
+    lock_acquire(&swap_table.lock);
+    size_t swap_idx = bitmap_scan_and_flip(swap_table.bit_map, 0, 1, false);
+    if (swap_idx == BITMAP_ERROR) {
+        lock_release(&swap_table.lock);
+        return false; // swap 공간 부족
+    }
+    anon_page->swap_idx = swap_idx;
+    lock_release(&swap_table.lock);
 
-	page->frame = NULL;
-	return true;;
+    for (int i = 0; i < SECTORS_PER_PAGE; i++) {
+        disk_write(swap_disk, swap_idx * SECTORS_PER_PAGE + i, page->frame->kva + DISK_SECTOR_SIZE * i);
+    }
+    // PML4에서 페이지 clear 등 필요한 처리
+    page->frame = NULL;
+    return true;
 }
 
 
 /* 익명 페이지를 파괴(destroy)합니다. PAGE는 호출자에 의해 해제됩니다. */
 // [*]3-L / [*]3-B. 전체적으로 변경
 static void anon_destroy(struct page *page) {
-	/* anon 페이지 파괴시 할당된 swap slot 반환 */
-	struct anon_page *anon_page = &page->anon;
-	if (page->frame)
-		free(page->frame);
-	if(page->anon.aux) 
-		free(page->anon.aux);
+    struct anon_page *anon_page = &page->anon;
+    // frame은 vm에서 할당/해제 책임, 여기서 free할 필요 없음(프레임 테이블이 관리)
+    // aux 포인터도 익명 페이지에는 불필요
 }

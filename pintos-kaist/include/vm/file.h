@@ -7,11 +7,13 @@ struct page;
 enum vm_type;
 
 struct file_page {
-	// [*]3-B. 추가
-	void* padding; 
-	enum vm_type type;
-	struct load_args_tmp *aux;
+    struct file *file;
+    off_t ofs;
+    size_t read_bytes;
+    enum vm_type type;
+    struct load_args_tmp *aux;
 };
+
 
 // [*]3-B. 추가
 struct load_args_tmp{
@@ -28,4 +30,5 @@ bool file_backed_initializer (struct page *page, enum vm_type type, void *kva);
 void *do_mmap(void *addr, size_t length, int writable,//[*]3-L
 		struct file *file, off_t offset);
 void do_munmap (void *va);//[*]3-L
+bool lazy_load_segment(struct page *page, void *aux);//[*]3-L
 #endif

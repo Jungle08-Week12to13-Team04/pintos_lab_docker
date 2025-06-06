@@ -479,26 +479,29 @@ static struct file *find_file_by_fd(int fd)
 
 #ifdef VM
 
-void *//[*]3-L
-sys_mmap(void *addr, size_t length, int writable, int fd, off_t offset) {
-  // [중요!] mmap은 fd가 0/1 (stdin, stdout)이면 실패해야 함
+void *sys_mmap(void *addr, size_t length, int writable, int fd, off_t offset) {
   if (fd == 0 || fd == 1 || length == 0 || addr == NULL || pg_ofs(addr) != 0)
+    return NULL;
+
+  if (offset % PGSIZE != 0)
+    return NULL;
+
+  // mmap 영역 전체가 user 영역인지 확인 (do_mmap 전에!)
+  if (!is_user_vaddr(addr) || !is_user_vaddr(addr + length - 1))
     return NULL;
 
   struct file *file = find_file_by_fd(fd);
   if (file == NULL)
     return NULL;
 
-  // 파일 길이가 0이면 실패
   if (file_length(file) == 0)
     return NULL;
 
   void *ret = do_mmap(addr, length, writable, file, offset);
-  if (ret == NULL)
-    return NULL;
-
   return ret;
 }
+
+
 
 void//[*]3-L
 sys_munmap(void *addr) {
