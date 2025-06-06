@@ -958,7 +958,7 @@ load_segment(struct file *file, off_t ofs, uint8_t *upage,
 		lazy_load_arg->zero_bytes = page_zero_bytes; // 이 페이지에서 read_bytes만큼 읽고 공간이 남아 0으로 채워야 하는 바이트 수
 		// vm_alloc_page_with_initializer를 호출하여 대기 중인 객체를 생성
 
-		if (!vm_alloc_page_with_initializer(VM_ANON, upage,
+		if (!vm_alloc_page_with_initializer(VM_FILE, upage,
 											writable, lazy_load_segment, lazy_load_arg))
 			return false;
 

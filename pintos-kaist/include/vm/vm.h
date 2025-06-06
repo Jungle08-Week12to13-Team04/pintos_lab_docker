@@ -52,6 +52,7 @@ struct page {
 	struct hash_elem hash_elem; // [*]3-B. hash 연결 list_elem
 	int writable; // [*]3-B. writable 필드
 	enum vm_type vm_type; // [*]3-B. 페이지 타입
+	struct thread *owner;
 
 	/* 타입별 데이터는 union 안에 결합되어 있습니다.
 	 * 각 함수는 자동으로 현재 union 타입을 감지합니다. */
@@ -70,6 +71,8 @@ struct frame {
     void *kva; // 프레임의 커널 가상주소
     struct page *page; // 연결된 유저 페이지
     struct list_elem elem; // frame_table에서 연결될 list 요소
+
+	int ref_count; // [*]3-Q. 이 프레임을 참조하는 페이지의 수
     bool pinned; // 교체 보호 여부
 };
 

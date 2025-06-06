@@ -104,40 +104,88 @@ file_backed_destroy(struct page *page) {
 
 
 /* mmap 작업을 수행합니다 */
+// void *
+// do_mmap(void *addr, size_t length, int writable, struct file *file, off_t offset) {
+//     struct file *reopen_file = file_reopen(file);
+//     if (reopen_file == NULL)
+//         return NULL;
+
+//     // 실제로 읽을 수 있는 파일의 남은 바이트 계산
+//     size_t file_len = file_length(reopen_file);
+//     size_t remain = (offset < file_len) ? (file_len - offset) : 0;
+//     size_t read_bytes = (remain < length) ? remain : length;
+//     size_t zero_bytes = ROUND_UP(length, PGSIZE) - read_bytes;
+
+//     void *va = addr;
+//     while (read_bytes > 0 || zero_bytes > 0) {
+//         size_t page_read_bytes = (read_bytes < PGSIZE) ? read_bytes : PGSIZE;
+//         size_t page_zero_bytes = PGSIZE - page_read_bytes;
+
+//         struct lazy_load_arg *aux = malloc(sizeof(struct lazy_load_arg));
+//         aux->file = reopen_file;
+//         aux->ofs = offset;
+//         aux->read_bytes = page_read_bytes;
+//         aux->zero_bytes = page_zero_bytes;
+
+//         if (!vm_alloc_page_with_initializer(VM_FILE, va, writable, lazy_load_segment, aux))
+//             return NULL;
+
+//         read_bytes -= page_read_bytes;
+//         zero_bytes -= page_zero_bytes;
+//         va += PGSIZE;
+//         offset += page_read_bytes;
+//     }
+
+//     return addr;
+// }
+
+//[*]3-Q
 void *
 do_mmap(void *addr, size_t length, int writable, struct file *file, off_t offset) {
+    // 1) 파일을 재오픈
     struct file *reopen_file = file_reopen(file);
     if (reopen_file == NULL)
         return NULL;
 
-    // 실제로 읽을 수 있는 파일의 남은 바이트 계산
+    // 2) 파일 길이 및 읽을 바이트/0으로 채울 바이트 계산
     size_t file_len = file_length(reopen_file);
     size_t remain = (offset < file_len) ? (file_len - offset) : 0;
     size_t read_bytes = (remain < length) ? remain : length;
-    size_t zero_bytes = ROUND_UP(length, PGSIZE) - read_bytes;
+    size_t total_zero_bytes = ROUND_UP(length, PGSIZE) - read_bytes;
 
+    // 3) 페이지별 오프셋 계산을 위한 임시 변수
+    size_t curr_offset = offset;
     void *va = addr;
-    while (read_bytes > 0 || zero_bytes > 0) {
+
+    while (read_bytes > 0 || total_zero_bytes > 0) {
+        // 한 페이지당 읽을 바이트 수와 zero-fill 바이트 수
         size_t page_read_bytes = (read_bytes < PGSIZE) ? read_bytes : PGSIZE;
         size_t page_zero_bytes = PGSIZE - page_read_bytes;
 
-        struct lazy_load_arg *aux = malloc(sizeof(struct lazy_load_arg));
-        aux->file = reopen_file;
-        aux->ofs = offset;
-        aux->read_bytes = page_read_bytes;
-        aux->zero_bytes = page_zero_bytes;
+        // lazy_load_arg 구조체를 페이지마다 새로 할당
+        struct lazy_load_arg *page_aux = malloc(sizeof(struct lazy_load_arg));
+        if (page_aux == NULL)
+            return NULL; // 할당 실패 시 NULL 반환
 
-        if (!vm_alloc_page_with_initializer(VM_FILE, va, writable, lazy_load_segment, aux))
+        page_aux->file = reopen_file;
+        page_aux->ofs = curr_offset;
+        page_aux->read_bytes = page_read_bytes;
+        page_aux->zero_bytes = page_zero_bytes;
+
+        // uninitialized page 생성 후 lazy_load_segment으로 초기화
+        if (!vm_alloc_page_with_initializer(VM_FILE, va, writable, lazy_load_segment, page_aux))
             return NULL;
 
+        // 다음 페이지로 이동
         read_bytes -= page_read_bytes;
-        zero_bytes -= page_zero_bytes;
+        total_zero_bytes -= page_zero_bytes;
+        curr_offset += page_read_bytes;
         va += PGSIZE;
-        offset += page_read_bytes;
     }
 
     return addr;
 }
+
 
 
 /* munmap 작업을 수행합니다 */
