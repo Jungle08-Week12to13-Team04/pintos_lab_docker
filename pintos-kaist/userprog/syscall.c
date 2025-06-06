@@ -441,8 +441,6 @@ void check_buffer(void *buffer, unsigned size) {
 static void
 check_writable(void *addr){
     struct thread *curr = thread_current();
-    if (addr == NULL || !is_user_vaddr(addr))
-        sys_exit(-1);
     struct page *page = spt_find_page(&curr->spt, addr);
     if (page == NULL)
         sys_exit(-1);

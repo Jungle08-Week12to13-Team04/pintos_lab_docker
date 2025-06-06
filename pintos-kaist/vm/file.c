@@ -14,7 +14,6 @@
 static bool file_backed_swap_in (struct page *page, void *kva);//[*]3-L
 static bool file_backed_swap_out (struct page *page);//[*]3-L
 static void file_backed_destroy (struct page *page);//[*]3-L
-static bool lazy_load_segment_a(struct page *page, void *aux);//[*]3-L
 
 /* 이 구조체는 수정하지 마십시오 */
 static const struct page_operations file_ops = {
@@ -23,6 +22,9 @@ static const struct page_operations file_ops = {
 	.destroy = file_backed_destroy,
 	.type = VM_FILE,
 };
+
+extern struct list frame_table;
+extern struct lock frame_table_lock;
 
 /* 파일 기반 가상 메모리(file vm)의 초기화 함수 */
 void
@@ -72,23 +74,21 @@ file_backed_swap_in (struct page *page, void *kva) {
 // [*]3-L
 static bool
 file_backed_swap_out (struct page *page) {
-    if (page->frame == NULL)
-        return true;
 
-    if (pml4_is_dirty(thread_current()->pml4, page->va)) {
-        struct file_page *file_page = &page->file;
+	struct file_page *file_page UNUSED = &page->file;
+	struct load_args_tmp* aux = page->file.aux;
 
-        //타입 캐스팅 고침
-        struct lazy_load_arg *aux = (struct lazy_load_arg *) file_page->aux;
-        struct file *file = aux->file;
-        off_t ofs = aux->ofs;
+	if (pml4_is_dirty(thread_current()->pml4,page->va)){
+		file_seek(aux->file, aux->ofs);
+		file_write(aux->file, page->va, aux->read_bytes);
+		pml4_set_dirty(thread_current()->pml4, page->va, 0); //?
+	} 
 
-        file_write_at(file, page->frame->kva, aux->read_bytes, ofs);
-        pml4_set_dirty(thread_current()->pml4, page->va, false);
-    }
+	pml4_clear_page(thread_current()->pml4, page->va);
+	
+	page->frame = NULL;
 
-    page->frame = NULL;
-    return true;
+	return true;
 }
 
 
@@ -96,10 +96,10 @@ file_backed_swap_out (struct page *page) {
 /* 파일 기반 페이지를 파괴(destroy)합니다. PAGE는 호출자가 해제합니다. */
 static void//[*]3-L
 file_backed_destroy(struct page *page) {
-    struct file_page *file_page = &page->file;
+	struct file_page *file_page = &page->file;
     struct lazy_load_arg *aux = (struct lazy_load_arg *) file_page->aux;
     if (aux != NULL)
-        free(aux);
+		free(aux);  
 }
 
 
@@ -141,6 +141,8 @@ do_mmap(void *addr, size_t length, int writable, struct file *file, off_t offset
 
 
 /* munmap 작업을 수행합니다 */
+/* file.c */
+
 void do_munmap(void *addr) {
     struct thread *curr = thread_current();
     struct page *page = spt_find_page(&curr->spt, addr);
@@ -149,20 +151,39 @@ void do_munmap(void *addr) {
         struct file_page *file_page = &page->file;
         struct lazy_load_arg *aux = (struct lazy_load_arg *) file_page->aux;
 
-        // dirty 플래그를 확인하여 write-back
-        if (pml4_is_dirty(curr->pml4, page->va) || pml4_is_dirty(curr->pml4, page->frame->kva)) {
-            file_write_at(aux->file, page->frame->kva, aux->read_bytes, aux->ofs);
+        /* 1) 사용자 VA 레벨에서만 dirty 비트를 확인 */
+        if (page->frame != NULL && pml4_is_dirty(curr->pml4, page->va)) {
+            /* 수정된 데이터를 파일에 기록 */
+            file_write_at(aux->file,
+                          page->frame->kva,
+                          aux->read_bytes,
+                          aux->ofs);
+            /* dirty 비트를 초기화 */
             pml4_set_dirty(curr->pml4, page->va, false);
-            pml4_set_dirty(curr->pml4, page->frame->kva, false);
         }
 
-
+        /* 2) 사용자 PTE만 제거 so that future accesses will fault */
         pml4_clear_page(curr->pml4, page->va);
 
-        // SPT에서 제거
+        /* 3) associated frame을 frame_table에서 제거하고, 물리 페이지(커널 VA) 해제 */
+        if (page->frame != NULL) {
+            /* a) 전역 frame_table 락을 잡고 리스트에서 제거 */
+            lock_acquire(&frame_table_lock);
+            list_remove(&page->frame->elem);
+            lock_release(&frame_table_lock);
+
+            /* b) 물리 페이지(커널 VA) 반환 */
+            palloc_free_page(page->frame->kva);
+
+            /* c) struct frame 객체도 free */
+            free(page->frame);
+            page->frame = NULL;
+        }
+
+        /* 4) SPT에서 page 객체 자체도 해제 */
         vm_dealloc_page(page);
 
-        // 다음 페이지
+        /* 5) 다음 페이지로 이동 (연속 매핑인 경우) */
         addr += PGSIZE;
         if (page->operations != &file_ops)
             break;
