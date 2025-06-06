@@ -209,7 +209,7 @@ page_fault (struct intr_frame *f) {
 
 	/* 1. 커널 가상 주소 공간에서의 폴트는 시스템 오류이므로 즉시 종료합니다. */
 	if (is_kernel_vaddr(fault_addr)) {
-		exit(-1);
+		sys_exit(-1);
 	}
 
 	/* 2. 시스템 콜 처리 중에는 스레드 구조체에 저장된 rsp를,

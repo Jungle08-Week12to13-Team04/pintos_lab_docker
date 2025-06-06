@@ -18,6 +18,8 @@
 #include "threads/mmu.h"
 #include "threads/vaddr.h"
 #include "intrinsic.h"
+#include "filesys/filesys.h"
+#include "threads/interrupt.h"
 #ifdef VM
 #include "vm/vm.h"
 #endif
@@ -899,25 +901,41 @@ install_page(void *upage, void *kpage, bool writable)
 /* From here, codes will be used after project 3.
  * If you want to implement the function for only project 2, implement it on the
  * upper block. */
-
 bool
-lazy_load_segment(struct page *page, void *aux)
-{
-    struct lazy_load_arg *lazy_load_arg = (struct lazy_load_arg *)aux;
+lazy_load_segment (struct page *page, void *aux) {
+	/* TODO: Load the segment from the file */
+	/* TODO: This called when the page fault occurs */
+	/* TODO: You should handle page fault here. */
+	struct load_info *li = (struct load_info *)aux;
+	struct file *file = li->file;
+	off_t ofs = li->ofs;
+	size_t page_read_bytes = li->page_read_bytes;
+	size_t page_zero_bytes = li->page_zero_bytes;
+	void *kpage = page->frame->kva;
 
-    // 파일에서 정확한 위치(offset)부터 read_bytes만큼 읽어오기
-    if (file_read_at(lazy_load_arg->file, page->frame->kva,
-                      lazy_load_arg->read_bytes, lazy_load_arg->ofs)
-        != (int)(lazy_load_arg->read_bytes)) {
+	// 1. 다른 프로세스와의 파일 접근 충돌을 막기 위해 락을 획득합니다.
+	lock_acquire(&filesys_lock);
 
-        return false;
-    }
+	// 2. 디스크 I/O 중 잠들 수 있도록 인터럽트를 잠시 켭니다.
+	intr_enable();
 
-    // 나머지는 0으로 채우기
-    memset(page->frame->kva + lazy_load_arg->read_bytes, 0,
-           lazy_load_arg->zero_bytes);
+	// 3. 파일에서 데이터를 읽어옵니다.
+	bool success = (file_read_at(file, kpage, page_read_bytes, ofs) == (int)page_read_bytes);
 
-    return true;
+	// 4. 페이지 폴트 핸들러의 원래 상태로 돌아가기 위해 인터럽트를 다시 끕니다.
+	intr_disable();
+
+	// 5. 락을 해제합니다.
+	lock_release(&filesys_lock);
+
+	if (!success) {
+		palloc_free_page(kpage);
+		return false;
+	}
+
+	memset(kpage + page_read_bytes, 0, page_zero_bytes);
+
+	return true;
 }
 
 
