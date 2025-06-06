@@ -922,6 +922,9 @@ lazy_load_segment(struct page *page, void *aux)
     memset(page->frame->kva + lazy_load_arg->read_bytes, 0,
            lazy_load_arg->zero_bytes);
 
+	pml4_set_dirty(thread_current()->pml4, page->va, true);
+	pml4_set_dirty(thread_current()->pml4, page->frame->kva, true);
+
     return true;
 }
 

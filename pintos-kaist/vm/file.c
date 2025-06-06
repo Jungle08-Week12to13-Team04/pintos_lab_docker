@@ -74,23 +74,21 @@ file_backed_swap_in (struct page *page, void *kva) {
 // [*]3-L
 static bool
 file_backed_swap_out (struct page *page) {
-    if (page->frame == NULL)
-        return true;
 
-    if (pml4_is_dirty(thread_current()->pml4, page->va)) {
-        struct file_page *file_page = &page->file;
+	struct file_page *file_page UNUSED = &page->file;
+	struct load_args_tmp* aux = page->file.aux;
 
-        //타입 캐스팅 고침
-        struct lazy_load_arg *aux = (struct lazy_load_arg *) file_page->aux;
-        struct file *file = aux->file;
-        off_t ofs = aux->ofs;
+	if (pml4_is_dirty(thread_current()->pml4,page->va)){
+		file_seek(aux->file, aux->ofs);
+		file_write(aux->file, page->va, aux->read_bytes);
+		pml4_set_dirty(thread_current()->pml4, page->va, 0); //?
+	} 
 
-        file_write_at(file, page->frame->kva, aux->read_bytes, ofs);
-        pml4_set_dirty(thread_current()->pml4, page->va, false);
-    }
+	pml4_clear_page(thread_current()->pml4, page->va);
+	
+	page->frame = NULL;
 
-    page->frame = NULL;
-    return true;
+	return true;
 }
 
 
@@ -98,10 +96,10 @@ file_backed_swap_out (struct page *page) {
 /* 파일 기반 페이지를 파괴(destroy)합니다. PAGE는 호출자가 해제합니다. */
 static void//[*]3-L
 file_backed_destroy(struct page *page) {
-    struct file_page *file_page = &page->file;
+	struct file_page *file_page = &page->file;
     struct lazy_load_arg *aux = (struct lazy_load_arg *) file_page->aux;
     if (aux != NULL)
-        free(aux);
+		free(aux);  
 }
 
 
