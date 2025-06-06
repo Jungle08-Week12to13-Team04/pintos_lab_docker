@@ -868,6 +868,12 @@ setup_stack(struct intr_frame *if_)
 		else
 			palloc_free_page(kpage);
 	}
+#ifdef VM
+    if (success) {
+        // 최초 스택 페이지의 가상 주소로 stack_bottom을 초기화합니다.
+        thread_current()->stack_bottom = ((uint8_t *) USER_STACK) - PGSIZE;
+    }
+#endif
 	return success;
 }
 

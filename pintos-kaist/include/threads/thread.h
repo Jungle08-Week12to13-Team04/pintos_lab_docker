@@ -119,7 +119,9 @@ struct thread
 #ifdef VM
 	/* Table for whole virtual memory owned by thread. */
 	struct supplemental_page_table spt;
-	uintptr_t save_rsp; 
+	uintptr_t save_rsp; // page_fault()가 syscall 처리 중 발생했을 때, 유저의 정확한 스택포인터를 찾기 위해 사용되는 필드
+	void *stack_bottom; // [*]3-Q setup_stack()에서 최초 스택 페이지 할당한 직후 해당 페이지의 stack 바닥 값을 저장하는 필드
+
 #endif
 	int64_t wakeup_tick; //[*]1-1. local tick 부여
 

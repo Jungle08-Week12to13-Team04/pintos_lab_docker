@@ -133,60 +133,117 @@ kill (struct intr_frame *f) {
    project2는 페이지 폴트시 바로 프로세스 죽임
    project3부턴 페이지 폴트시 빈 페이지 찾아줌
     */
+// static void
+// page_fault (struct intr_frame *f) {
+// 	bool not_present;  /* True: not-present page, false: writing r/o page. */
+// 	bool write;        /* True: access was write, false: access was read. */
+// 	bool user;         /* True: access by user, false: access by kernel. */
+// 	void *fault_addr;  /* Fault address. */
+
+// 	/* Obtain faulting address, the virtual address that was
+// 	   accessed to cause the fault.  It may point to code or to
+// 	   data.  It is not necessarily the address of the instruction
+// 	   that caused the fault (that's f->rip). */
+
+// 	fault_addr = (void *) rcr2();
+
+// 	/* Turn interrupts back on (they were only off so that we could
+// 	   be assured of reading CR2 before it changed). */
+// 	intr_enable ();
+
+
+// 	/* Determine cause. */
+// 	/* 
+// 	[*]2-o 여기서 오류 정보 감별 
+// 	1. 참이면 존재하지 않는 페이지에 접근한 경우, 거짓이면 페이지는 있었지만 읽기전용에 쓰기를 한 경우
+// 	2. 참이면 접근이 쓰기였던 경우, 거짓이면 접근이 읽기였던 경우
+// 	3. 참이면 접근 주체가 유저모드, 거짓이면 접근 주체가 커널모드
+// 	*/
+// 	not_present = (f->error_code & PF_P) == 0;
+// 	write = (f->error_code & PF_W) != 0;
+// 	user = (f->error_code & PF_U) != 0;
+
+// 	//[*]3-B. 커널 주소로 접근 시 바로 종료
+// 	if (is_kernel_vaddr(fault_addr)){
+// 		sys_exit(-1);
+// 		return;
+// 	}
+
+// #ifdef VM
+// 	/* For project 3 and later. */
+
+// 	if (vm_try_handle_fault(f, fault_addr, user, write, not_present))
+// 		return;
+
+// #endif
+// 	sys_exit(-1);
+
+// 	/* Count page faults. */
+// 	page_fault_cnt++;
+
+// 	/* If the fault is true fault, show info and exit. */
+// 	printf ("Page fault at %p: %s error %s page in %s context.\n",
+// 			fault_addr,
+// 			not_present ? "not present" : "rights violation",
+// 			write ? "writing" : "reading",
+// 			user ? "user" : "kernel");
+// 	kill (f);
+// }
+
+
+/* Page fault handler.  This is a skeleton that must be filled in
+   to handle page faults.  Some solutions make modifications to the
+   __interrupt C frame, but ours does not. */
 static void
 page_fault (struct intr_frame *f) {
-	bool not_present;  /* True: not-present page, false: writing r/o page. */
-	bool write;        /* True: access was write, false: access was read. */
-	bool user;         /* True: access by user, false: access by kernel. */
-	void *fault_addr;  /* Fault address. */
-
-	/* Obtain faulting address, the virtual address that was
-	   accessed to cause the fault.  It may point to code or to
-	   data.  It is not necessarily the address of the instruction
-	   that caused the fault (that's f->rip). */
-
-	fault_addr = (void *) rcr2();
-
-	/* Turn interrupts back on (they were only off so that we could
-	   be assured of reading CR2 before it changed). */
-	intr_enable ();
-
-
-	/* Determine cause. */
-	/* 
-	[*]2-o 여기서 오류 정보 감별 
-	1. 참이면 존재하지 않는 페이지에 접근한 경우, 거짓이면 페이지는 있었지만 읽기전용에 쓰기를 한 경우
-	2. 참이면 접근이 쓰기였던 경우, 거짓이면 접근이 읽기였던 경우
-	3. 참이면 접근 주체가 유저모드, 거짓이면 접근 주체가 커널모드
-	*/
-	not_present = (f->error_code & PF_P) == 0;
-	write = (f->error_code & PF_W) != 0;
-	user = (f->error_code & PF_U) != 0;
-
-	//[*]3-B. 커널 주소로 접근 시 바로 종료
-	if (is_kernel_vaddr(fault_addr)){
-		sys_exit(-1);
-		return;
-	}
-
-#ifdef VM
-	/* For project 3 and later. */
-
-	if (vm_try_handle_fault(f, fault_addr, user, write, not_present))
-		return;
-
-#endif
-	sys_exit(-1);
+	void *fault_addr = (void *) rcr2(); /* Faulting address. */
+	struct thread *t = thread_current ();
 
 	/* Count page faults. */
 	page_fault_cnt++;
 
-	/* If the fault is true fault, show info and exit. */
+#ifdef VM
+	/*******************************************************
+	 * Project 3: Virtual Memory Handling         *
+	 *******************************************************/
+
+	/* 1. 커널 가상 주소 공간에서의 폴트는 시스템 오류이므로 즉시 종료합니다. */
+	if (is_kernel_vaddr(fault_addr)) {
+		exit(-1);
+	}
+
+	/* 2. 시스템 콜 처리 중에는 스레드 구조체에 저장된 rsp를,
+	      아니면 인터럽트 프레임의 rsp를 사용합니다. */
+	void *rsp = f->rsp;
+    /* t->save_rsp가 존재한다면 (즉, 시스템 콜 핸들러 내에서 폴트 발생) 그 값을 사용합니다. */
+	if (t->save_rsp) {
+		rsp = t->save_rsp;
+	}
+
+	/* 3. 스택 확장(stack growth)인지 확인합니다. */
+	if (fault_addr != NULL && fault_addr < (void *)USER_STACK &&
+	    fault_addr >= (void *)USER_STACK - (1 << 20) && fault_addr >= rsp - 32)
+	{
+		// 스택 확장을 시도합니다.
+		if (vm_stack_growth(fault_addr)) {
+			return;
+		}
+	}
+	
+	/* 4. 스택 확장이 아니라면, lazy-loading이나 swap-in 등을 처리하기 위해
+	      페이지를 요청(claim)해 봅니다. */
+	if (vm_claim_page(fault_addr)) {
+		return; /* 페이지 요청 성공 */
+	}
+
+#endif
+
+	/* VM으로 처리할 수 없거나 VM 기능이 정의되지 않은 경우,
+	   잘못된 접근으로 간주하고 프로세스를 종료합니다. */
 	printf ("Page fault at %p: %s error %s page in %s context.\n",
 			fault_addr,
-			not_present ? "not present" : "rights violation",
-			write ? "writing" : "reading",
-			user ? "user" : "kernel");
+			f->error_code & PF_W ? "write" : "read",
+			f->error_code & PF_P ? "present" : "not present",
+			f->error_code & PF_U ? "user" : "kernel");
 	kill (f);
 }
-

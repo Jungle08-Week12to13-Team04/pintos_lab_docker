@@ -204,24 +204,52 @@ vm_get_frame (void) {
 
 // [*]3-B. 스택 확장 함수
 /* 스택을 확장하는 작업. */
-static void
-vm_stack_growth (void *addr UNUSED) {
+// static void
+// vm_stack_growth (void *addr UNUSED) {
 
-	addr = pg_round_down(addr);
+// 	addr = pg_round_down(addr);
 
-	while(1){
-		if(!spt_find_page(&thread_current()->spt,addr)){
-			if (vm_alloc_page(VM_ANON | VM_MARKER_0, addr, true)){
-				vm_claim_page(addr);
-				memset(addr, 0, PGSIZE);
-			}
-			else
-				PANIC("vm_alloc_page failed in vm_stack_growth function");
-		}
-		else
-			break;
-		addr = addr + PGSIZE;
-	}
+// 	while(1){
+// 		if(!spt_find_page(&thread_current()->spt,addr)){
+// 			if (vm_alloc_page(VM_ANON | VM_MARKER_0, addr, true)){
+// 				vm_claim_page(addr);
+// 				memset(addr, 0, PGSIZE);
+// 			}
+// 			else
+// 				PANIC("vm_alloc_page failed in vm_stack_growth function");
+// 		}
+// 		else
+// 			break;
+// 		addr = addr + PGSIZE;
+// 	}
+// }
+
+/* Grow the stack using the address from user access. */
+bool
+vm_stack_growth (void *addr) {
+    void *floor_addr = pg_round_down(addr);
+    struct thread *t = thread_current();
+    void *stack_bottom = pg_round_down(t->stack_bottom);
+
+    if (floor_addr < stack_bottom) {
+        /* If the faulting address is below the current stack bottom,
+           allocate all pages from the faulting address up to the
+           current stack bottom. */
+        while (floor_addr < stack_bottom) {
+            if (!vm_alloc_page(VM_ANON | VM_MARKER_0, floor_addr, 1)) {
+                return false;
+            }
+            floor_addr += PGSIZE;
+        }
+        t->stack_bottom = pg_round_down(addr);
+    } else {
+        /* If the faulting address is within the already allocated stack space
+           (but not yet committed), just allocate that single page. */
+        if (!vm_alloc_page(VM_ANON | VM_MARKER_0, floor_addr, 1)) {
+            return false;
+        }
+    }
+    return true;
 }
 
 
