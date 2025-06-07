@@ -575,7 +575,7 @@ struct ELF64_PHDR
 #define ELF ELF64_hdr
 #define Phdr ELF64_PHDR
 
-static bool setup_stack(struct intr_frame *if_);
+bool setup_stack(struct intr_frame *if_); //[*]3-B. 반환형 static 아님
 static bool validate_segment(const struct Phdr *, struct file *);
 static bool load_segment(struct file *file, off_t ofs, uint8_t *upage,
 						 uint32_t read_bytes, uint32_t zero_bytes,
@@ -905,25 +905,27 @@ install_page(void *upage, void *kpage, bool writable)
  * If you want to implement the function for only project 2, implement it on the
  * upper block. */
 
+ //[*]3-B. 변경
 bool
 lazy_load_segment(struct page *page, void *aux)
 {
-    struct lazy_load_arg *lazy_load_arg = (struct lazy_load_arg *)aux;
+    if (page == NULL)
+        return false;
 
-    // 파일에서 정확한 위치(offset)부터 read_bytes만큼 읽어오기
-    if (file_read_at(lazy_load_arg->file, page->frame->kva,
-                      lazy_load_arg->read_bytes, lazy_load_arg->ofs)
-        != (int)(lazy_load_arg->read_bytes)) {
+    struct segment_aux *segment_aux = (struct segment_aux *) aux;
+    struct file *file = segment_aux->file;
+    off_t offset = segment_aux->offset;
+    size_t page_read_bytes = segment_aux->page_read_bytes;
+    size_t page_zero_bytes = PGSIZE - page_read_bytes;
 
+    file_seek(file, offset);
+
+    if (file_read(file, page->frame->kva, page_read_bytes) != (int) page_read_bytes) {
+        palloc_free_page(page->frame->kva);
         return false;
     }
 
-    // 나머지는 0으로 채우기
-    memset(page->frame->kva + lazy_load_arg->read_bytes, 0,
-           lazy_load_arg->zero_bytes);
-
-	pml4_set_dirty(thread_current()->pml4, page->va, true);
-	pml4_set_dirty(thread_current()->pml4, page->frame->kva, true);
+    memset((uint8_t *)page->frame->kva + page_read_bytes, 0, page_zero_bytes);
 
     return true;
 }
@@ -943,52 +945,50 @@ lazy_load_segment(struct page *page, void *aux)
  *
  * Return true if successful, false if a memory allocation error
  * or disk read error occurs. */
+ //[*]3-B. 변경
 static bool
 load_segment(struct file *file, off_t ofs, uint8_t *upage,
 			 uint32_t read_bytes, uint32_t zero_bytes, bool writable)
 {
-	ASSERT((read_bytes + zero_bytes) % PGSIZE == 0);
-	ASSERT(pg_ofs(upage) == 0);
-	ASSERT(ofs % PGSIZE == 0);
+	ASSERT ((read_bytes + zero_bytes) % PGSIZE == 0);
+	ASSERT (pg_ofs (upage) == 0);
+	ASSERT (ofs % PGSIZE == 0);
 
-	while (read_bytes > 0 || zero_bytes > 0)
-	{
+	while (read_bytes > 0 || zero_bytes > 0) {
 		/* Do calculate how to fill this page.
 		 * We will read PAGE_READ_BYTES bytes from FILE
 		 * and zero the final PAGE_ZERO_BYTES bytes. */
-		// 페이지를 채우는 방법을 계산 -> 파일에서 PAGE_READ_BYTES 만큼 읽고, 나머지 PAGE_ZERO_BYTES 만큼 0으로 채움
 		size_t page_read_bytes = read_bytes < PGSIZE ? read_bytes : PGSIZE;
 		size_t page_zero_bytes = PGSIZE - page_read_bytes;
 
 		/* TODO: Set up aux to pass information to the lazy_load_segment. */
-		// void *aux = NULL;
-		
-		// [*]3-B. loading을 위해 필요한 정보를 포함하는 구조체 구성
-		// vm_alloc_page_with_initializer에 제공할 aux 인수로 필요한 보조 값들을 설정
-		struct lazy_load_arg *lazy_load_arg = (struct lazy_load_arg *)malloc(sizeof(struct lazy_load_arg));
-		lazy_load_arg->file = file;					 // 내용이 담긴 파일 객체
-		lazy_load_arg->ofs = ofs;					 // 이 페이지에서 읽기 시작할 위치
-		lazy_load_arg->read_bytes = page_read_bytes; // 이 페이지에서 읽어야 하는 바이트 수
-		lazy_load_arg->zero_bytes = page_zero_bytes; // 이 페이지에서 read_bytes만큼 읽고 공간이 남아 0으로 채워야 하는 바이트 수
-		// vm_alloc_page_with_initializer를 호출하여 대기 중인 객체를 생성
+		//void *aux = NULL;
 
-		if (!vm_alloc_page_with_initializer(VM_ANON, upage,
-											writable, lazy_load_segment, lazy_load_arg))
+		struct segment_aux* segment_aux = (struct segment_aux *)malloc(sizeof(struct segment_aux));
+		
+		segment_aux->file = file; 
+		segment_aux->page_read_bytes = page_read_bytes; 
+		segment_aux->offset = ofs; 
+
+		ofs += page_read_bytes;
+
+
+
+		if (!vm_alloc_page_with_initializer (VM_ANON, upage,
+					writable, lazy_load_segment, segment_aux))
 			return false;
 
-
 		/* Advance. */
-		// 다음 반복을 위하여 읽어들인 만큼 값을 갱신
 		read_bytes -= page_read_bytes;
 		zero_bytes -= page_zero_bytes;
 		upage += PGSIZE;
-		ofs += page_read_bytes;
 	}
 	return true;
 }
 
 /* Create a PAGE of stack at the USER_STACK. Return true on success. */
-static bool
+ //[*]3-B. 변경
+bool
 setup_stack(struct intr_frame *if_)
 {
 	bool success = false;

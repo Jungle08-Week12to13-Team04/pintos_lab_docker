@@ -11,19 +11,9 @@ struct file_page {
     off_t ofs;
     size_t read_bytes;
     enum vm_type type;
-    struct load_args_tmp *aux;
 };
 
 
-// [*]3-B. 추가
-struct load_args_tmp{
-  struct file *file;
-  off_t ofs;
-  uint32_t read_bytes;
-  uint32_t zero_bytes;
-  void *save_addr;
-  size_t read_bytes_sum;
-};
 
 void vm_file_init (void);
 bool file_backed_initializer (struct page *page, enum vm_type type, void *kva);
