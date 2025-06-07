@@ -70,6 +70,7 @@ struct frame {
     void *kva; // 프레임의 커널 가상주소
     struct page *page; // 연결된 유저 페이지
     struct list_elem elem; // frame_table에서 연결될 list 요소
+	size_t ref_cnt; // 공유 프레임 참조 수 //[*]3-Q
     bool pinned; // 교체 보호 여부
 };
 
@@ -97,10 +98,18 @@ struct supplemental_page_table {
 	struct hash spt_hash; // [*]3-B. spt - hash 사용
 };
 
+struct frame *frame_create (void *kva);
+void *vm_get_frame (void);
+struct frame *vm_get_victim (void);
+void *vm_do_eviction (void);
+
+
 #include "threads/thread.h"
 void supplemental_page_table_init (struct supplemental_page_table *spt);
 bool supplemental_page_table_copy (struct supplemental_page_table *dst,
-		struct supplemental_page_table *src);
+                                   struct supplemental_page_table *src,
+                                   struct thread *parent,
+                                   struct thread *child);
 void supplemental_page_table_kill (struct supplemental_page_table *spt);
 struct page *spt_find_page (struct supplemental_page_table *spt,
 		void *va);

@@ -254,7 +254,8 @@ __do_fork(void *aux)
 	process_activate(cur);
 #ifdef VM
 	supplemental_page_table_init(&cur->spt); // [*]3-B. 변경
-	if (!supplemental_page_table_copy(&cur->spt, &parent->spt)) 
+	// if (!supplemental_page_table_copy(&cur->spt, &parent->spt)) 
+	if (!supplemental_page_table_copy(&cur->spt, &parent->spt, parent, cur))
 		goto error;
 #else // 부모의 사용자 주소 공간을 자식에게 복사하는 과정 - VM을 사용하지 않는 경우
 	if (!pml4_for_each(cur->parent->pml4, duplicate_pte, cur->parent))
