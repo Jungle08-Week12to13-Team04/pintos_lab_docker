@@ -94,42 +94,97 @@ struct fork_info {
 /* Clones the current process as `name`. Returns the new process's thread id, or
  * TID_ERROR if the thread cannot be created. */
 // [*]2-B. fork 구현
+// tid_t process_fork(const char *name, struct intr_frame *if_ UNUSED)
+// {
+// 	struct thread *cur = thread_current(); // 현재 부모 스레드
+// 	struct thread *real_child;
+
+// 	//[*]3-B. 
+// 	struct fork_info *args = palloc_get_page(0);
+// 	if (args == NULL)
+// 		return TID_ERROR;
+// 	args->parent = thread_current();
+// 	memcpy(&args->parent_tf, &if_, sizeof(struct intr_frame));
+
+
+// 	tid_t tid = thread_create(name, PRI_DEFAULT, __do_fork, args);	//[*]3-B. if_->args
+// 	if (tid == TID_ERROR)
+// 	{
+// 		palloc_free_page(args);
+// 		return TID_ERROR;
+// 	}
+
+// 	struct list_elem *e;
+// 	for (e = list_begin(&cur->child_list); e != list_end(&cur->child_list); e = list_next(e)) // 자식 리스트를 순회
+// 	{
+// 		struct thread *child = list_entry(e, struct thread, child_elem);
+		
+// 		if (child->tid != tid){						   
+// 			continue;
+// 		}
+// 		else {
+// 			real_child = child;
+// 			break;
+// 		}
+// 	}
+
+// 	sema_down(&cur->fork_sema);
+// 	// 세마 업으로 깨어났을때, 정상복제인지 복제실패인지 확인하고 실패하면 TID_ERROR 반환;
+// 	if (real_child->exit_status == -1)
+// 	{	
+// 		return TID_ERROR;
+// 	}
+	
+// 	return tid;
+// }
+
+
+// [*]3-Q
 tid_t process_fork(const char *name, struct intr_frame *if_ UNUSED)
 {
 	struct thread *cur = thread_current(); // 현재 부모 스레드
-	struct thread *real_child;
+	struct thread *real_child = NULL;
 
-	//[*]3-B. 
+	// 자식에게 넘겨줄 정보를 담은 구조체 생성
 	struct fork_info *args = palloc_get_page(0);
 	if (args == NULL)
 		return TID_ERROR;
 	args->parent = thread_current();
-	memcpy(&args->parent_tf, &if_, sizeof(struct intr_frame));
+	// intr_frame은 포인터가 아니므로 memcpy로 값을 복사
+	memcpy(&args->parent_tf, if_, sizeof(struct intr_frame));
 
-
-	tid_t tid = thread_create(name, PRI_DEFAULT, __do_fork, args);	//[*]3-B. if_->args
+	// 자식 스레드 생성
+	tid_t tid = thread_create(name, PRI_DEFAULT, __do_fork, args);
 	if (tid == TID_ERROR)
 	{
 		palloc_free_page(args);
 		return TID_ERROR;
 	}
 
+    // ‼️ [수정 사항] 교착 상태 방지를 위해 CPU 양보
+    // 자식 스레드가 먼저 실행되어 필요한 자원을 선점할 기회를 줍니다.
+    // 이를 통해 부모가 파일 시스템 락 등을 쥔 상태로 대기하는 것을 방지합니다.
+    thread_yield(); 
+
+	// 방금 생성한 자식 스레드를 찾기
 	struct list_elem *e;
-	for (e = list_begin(&cur->child_list); e != list_end(&cur->child_list); e = list_next(e)) // 자식 리스트를 순회
+	for (e = list_begin(&cur->child_list); e != list_end(&cur->child_list); e = list_next(e))
 	{
 		struct thread *child = list_entry(e, struct thread, child_elem);
-		
-		if (child->tid != tid){						   
-			continue;
-		}
-		else {
+		if (child->tid == tid){
 			real_child = child;
 			break;
 		}
 	}
+    // 자식을 못찾는 경우는 없어야 하지만, 방어 코드
+    if (real_child == NULL) {
+        return TID_ERROR;
+    }
 
+	// 자식의 __do_fork 작업이 끝날 때까지 대기
 	sema_down(&cur->fork_sema);
-	// 세마 업으로 깨어났을때, 정상복제인지 복제실패인지 확인하고 실패하면 TID_ERROR 반환;
+	
+    // 자식의 자원 복제가 실패했다면 에러 반환
 	if (real_child->exit_status == -1)
 	{	
 		return TID_ERROR;
@@ -311,72 +366,124 @@ error:
  * Returns -1 on fail. */
 // 현재 프로세스를 새로운 실행파일로 덮어쓰기 위한 함수
 // [*]2-O 문자열 파싱, 스택프레임 구성
+// int process_exec(void *f_name)
+// {
+// 	char *file_name = f_name;
+// 	bool success;
+
+// 	/* We cannot use the intr_frame in the thread structure.
+// 	 * This is because when current thread rescheduled,
+// 	 * it stores the execution information to the member. */
+// 	struct intr_frame _if;
+// 	_if.ds = _if.es = _if.ss = SEL_UDSEG;
+// 	_if.cs = SEL_UCSEG;
+// 	_if.eflags = FLAG_IF | FLAG_MBS;
+
+// 	/* We first kill the current context */
+// 	// 부모-자식 관계 상에서 자식 프로세스가 “새로운 실행 파일을 불러오기 전에” ,
+// 	// 기존 환경을 청소하는 작업.
+// 	process_cleanup();
+
+// 	//
+// 	// for implement argument passing
+// 	// before load,
+// 	// 스택 프레임에 프로그램 실행을 위한 정보들(인자 문자열, argv 배열, argc, fake return address 등)을
+// 	// 쌓아넣기 위해 받은 입력값을 파싱하는 작업을 이 위치에서 수행합니다.
+
+// 	// 유저 애플리케이션은 인자 전달을 위해 %rdi, %rsi, %rdx, %rcx, %r8, %r9 순서로 정수 레지스터를 사용함.
+
+// 	//[*]3-B. argument passing 수정
+//     char *parse[64];
+//     char *token, *save_ptr;
+//     int count = 0;
+//     for (token = strtok_r(file_name, " ", &save_ptr); token != NULL; token = strtok_r(NULL, " ", &save_ptr))
+//         parse[count++] = token;
+
+	
+// 	// [*]3-B. destroy에서 해제된 buckets >> init ??
+// 	#ifdef VM
+// 		supplemental_page_table_init (&thread_current ()->spt);
+// 	#endif
+
+// 	/* And then load the binary */
+// 	success = load(file_name, &_if);
+
+// 	//[*]3-B. argument passing 수정
+// 	argument_stack(parse, count, &_if.rsp); // 함수 내부에서 parse와 rsp의 값을 직접 변경하기 위해 주소 전달
+//     _if.R.rdi = count;
+//     _if.R.rsi = (char *)_if.rsp + 8;
+	
+// 	/* If load failed, quit. */
+// 	palloc_free_page(file_name);
+// 	if (!success)
+// 		return -1;
+
+// 	// 여기부터 유저 영역
+// 	/* Start switched process. */
+
+// 	// 유저 영역에 들어가면서 시스템 콜을 호출할텐데,
+// 	// 커널에선 시스템 콜 번호와 인자를 확인한 후
+// 	// 그에 맞는 시스템 콜 핸들러 함수가 호출되고
+// 	// 그 핸들러가 요청을 적당히 처리하고(출력, 프로세스 관리 등) ㄱ결과를 사용자 프로그램에 반환한 뒤 사용자 모드로 복귀
+
+// 	//printf("before do_iret\n");
+// 	//printf("%" PRIX64 "\n",&_if.rip);
+// 	do_iret(&_if);
+// 	// do_iret가 호출된 이후로부턴 syscall.c에 구현된 syscall handler가 역할을 함.
+// 	NOT_REACHED();
+// }
+
+
+// [*]3-Q
 int process_exec(void *f_name)
 {
 	char *file_name = f_name;
 	bool success;
 
-	/* We cannot use the intr_frame in the thread structure.
-	 * This is because when current thread rescheduled,
-	 * it stores the execution information to the member. */
 	struct intr_frame _if;
 	_if.ds = _if.es = _if.ss = SEL_UDSEG;
 	_if.cs = SEL_UCSEG;
 	_if.eflags = FLAG_IF | FLAG_MBS;
 
-	/* We first kill the current context */
-	// 부모-자식 관계 상에서 자식 프로세스가 “새로운 실행 파일을 불러오기 전에” ,
-	// 기존 환경을 청소하는 작업.
-	process_cleanup();
+    // ‼️ [수정 사항] process_cleanup() 호출을 이 위치에서 제거!
+	// 기존 페이지 테이블을 너무 일찍 파괴하는 문제를 해결합니다.
 
-	//
-	// for implement argument passing
-	// before load,
-	// 스택 프레임에 프로그램 실행을 위한 정보들(인자 문자열, argv 배열, argc, fake return address 등)을
-	// 쌓아넣기 위해 받은 입력값을 파싱하는 작업을 이 위치에서 수행합니다.
-
-	// 유저 애플리케이션은 인자 전달을 위해 %rdi, %rsi, %rdx, %rcx, %r8, %r9 순서로 정수 레지스터를 사용함.
-
-	//[*]3-B. argument passing 수정
+	// 인자 파싱
     char *parse[64];
     char *token, *save_ptr;
     int count = 0;
     for (token = strtok_r(file_name, " ", &save_ptr); token != NULL; token = strtok_r(NULL, " ", &save_ptr))
         parse[count++] = token;
-
 	
-	// [*]3-B. destroy에서 해제된 buckets >> init ??
 	#ifdef VM
 		supplemental_page_table_init (&thread_current ()->spt);
 	#endif
 
-	/* And then load the binary */
+	/* 새 실행 파일 로드 */
 	success = load(file_name, &_if);
 
-	//[*]3-B. argument passing 수정
-	argument_stack(parse, count, &_if.rsp); // 함수 내부에서 parse와 rsp의 값을 직접 변경하기 위해 주소 전달
+    // ‼️ [수정 사항] load가 성공한 직후에 기존 자원을 정리하도록 위치 변경
+    // 새로운 페이지 테이블(pml4) 생성이 보장된 후에 기존 자원을 안전하게 해제합니다.
+    if (success) {
+        process_cleanup();
+    }
+	
+	// 인자 스택 구성
+	argument_stack(parse, count, &_if.rsp);
     _if.R.rdi = count;
     _if.R.rsi = (char *)_if.rsp + 8;
 	
-	/* If load failed, quit. */
+	/* load 실패 시 종료 */
 	palloc_free_page(file_name);
 	if (!success)
 		return -1;
 
-	// 여기부터 유저 영역
-	/* Start switched process. */
-
-	// 유저 영역에 들어가면서 시스템 콜을 호출할텐데,
-	// 커널에선 시스템 콜 번호와 인자를 확인한 후
-	// 그에 맞는 시스템 콜 핸들러 함수가 호출되고
-	// 그 핸들러가 요청을 적당히 처리하고(출력, 프로세스 관리 등) ㄱ결과를 사용자 프로그램에 반환한 뒤 사용자 모드로 복귀
-
-	//printf("before do_iret\n");
-	//printf("%" PRIX64 "\n",&_if.rip);
+	/* 새 프로세스 실행 시작 */
 	do_iret(&_if);
-	// do_iret가 호출된 이후로부턴 syscall.c에 구현된 syscall handler가 역할을 함.
 	NOT_REACHED();
 }
+
+
 
 /* Waits for thread TID to die and returns its exit status.  If
  * it was terminated by the kernel (i.e. killed due to an
