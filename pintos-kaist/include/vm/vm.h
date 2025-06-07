@@ -52,6 +52,7 @@ struct page {
 	struct hash_elem hash_elem; // [*]3-B. hash 연결 list_elem
 	int writable; // [*]3-B. writable 필드
 	enum vm_type vm_type; // [*]3-B. 페이지 타입
+	int swap_slot;
 
 	/* 타입별 데이터는 union 안에 결합되어 있습니다.
 	 * 각 함수는 자동으로 현재 union 타입을 감지합니다. */
@@ -71,6 +72,7 @@ struct frame {
     struct page *page; // 연결된 유저 페이지
     struct list_elem elem; // frame_table에서 연결될 list 요소
     bool pinned; // 교체 보호 여부
+	int ref_count;
 };
 
 
@@ -100,7 +102,7 @@ struct supplemental_page_table {
 #include "threads/thread.h"
 void supplemental_page_table_init (struct supplemental_page_table *spt);
 bool supplemental_page_table_copy (struct supplemental_page_table *dst,
-		struct supplemental_page_table *src);
+		struct supplemental_page_table *src, uint64_t *child_pml4);
 void supplemental_page_table_kill (struct supplemental_page_table *spt);
 struct page *spt_find_page (struct supplemental_page_table *spt,
 		void *va);
@@ -108,8 +110,7 @@ bool spt_insert_page (struct supplemental_page_table *spt, struct page *page);
 void spt_remove_page (struct supplemental_page_table *spt, struct page *page);
 
 void vm_init (void);
-bool vm_try_handle_fault (struct intr_frame *f, void *addr, bool user,
-		bool write, bool not_present);
+bool vm_try_handle_fault(struct intr_frame *f, void *addr, bool user, bool write, void *esp);
 
 #define vm_alloc_page(type, upage, writable) \
 	vm_alloc_page_with_initializer ((type), (upage), (writable), NULL, NULL)
