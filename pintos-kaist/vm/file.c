@@ -24,7 +24,6 @@ static const struct page_operations file_ops = {
 };
 
 extern struct list frame_table;
-extern struct lock frame_table_lock;
 
 /* 파일 기반 가상 메모리(file vm)의 초기화 함수 */
 void
@@ -167,10 +166,8 @@ void do_munmap(void *addr) {
 
         /* 3) associated frame을 frame_table에서 제거하고, 물리 페이지(커널 VA) 해제 */
         if (page->frame != NULL) {
-            /* a) 전역 frame_table 락을 잡고 리스트에서 제거 */
-            lock_acquire(&frame_table_lock);
-            list_remove(&page->frame->elem);
-            lock_release(&frame_table_lock);
+            /* a) 리스트에서 제거 */
+            list_remove(&page->frame->frame_elem);
 
             /* b) 물리 페이지(커널 VA) 반환 */
             palloc_free_page(page->frame->kva);
