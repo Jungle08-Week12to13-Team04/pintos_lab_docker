@@ -211,98 +211,69 @@ duplicate_pte(uint64_t *pte, void *va, void *aux)
 static void
 __do_fork(void *aux)
 {
-	// [*]2-o. 각 작업 마다 성공여부 기록, 모든 복사작업 중 하나라도 실패하면 복제 실패로 간주해야함.
 	bool succ = true;
-
-	// /* 1. Read the cpu context to local stack. */
-	// [*]2-o 1. 부모의 실행 흐름을 이어가기 위한 callee-saved reg
-
-	// struct intr_frame *parent_tf = (struct intr_frame*) aux;
-	// struct thread *cur = thread_current();
-	// struct thread *parent = (struct thread *)aux; // [*]3-B. 추가
-	// memcpy(&cur->tf, parent_tf, sizeof(struct intr_frame));
 
 	struct fork_info *args = (struct fork_info *)aux;
 	struct thread *parent = args->parent;
 	struct intr_frame *parent_tf = args->parent_tf;
 	struct thread *cur = thread_current();
 
-
-	// [*]3-Q. fd_table 복사 전 명시적 초기화 실행!! -> 중요!
-	// fd_table 초기화 및 할당을 하지 않은 채 fd_table에 값을 대입하려 했기에 예외 동작 발생.
+	/* 1. 부모의 fd_table 복제 전 명시적 초기화 */
 	cur->fd_table = palloc_get_multiple(PAL_ZERO, FDT_PAGES);
 	if (cur->fd_table == NULL)
 		goto error;
+	cur->next_fd = 2;
 
-	cur->next_fd = 2; 
-
+	/* 2. intr_frame 복사 */
 	memcpy(&cur->tf, parent_tf, sizeof(struct intr_frame));
-	palloc_free_page(args);  // 메모리 해제
+	palloc_free_page(args);  // 🔧 fork_info 해제
 
-
-	// void *memcpy(void *dest, const void *src, size_t n)
-	// src 주소로부터 n바이트를 읽어서 dest 주소로 복사한다.
-	//palloc_free_page(args); // 더 이상 필요 없는 인자는 해제
-
-	/* 2. Duplicate PT */
-
-	// 2. 부모프로세스가 갖고있는 가상메모리 구조
-	// 2-1. 단, 실제 물리메모리 영역이 겹치면 안됨
+	/* 3. 자식 프로세스용 pml4 생성 및 활성화 */
 	cur->pml4 = pml4_create();
 	if (cur->pml4 == NULL)
 		goto error;
 	process_activate(cur);
+
 #ifdef VM
-	supplemental_page_table_init(&cur->spt); // [*]3-B. 변경
-	// if (!supplemental_page_table_copy(&cur->spt, &parent->spt)) 
+	/* 4. 보조 페이지 테이블 초기화 및 복사 */
+	supplemental_page_table_init(&cur->spt);
 	if (!supplemental_page_table_copy(&cur->spt, &parent->spt, parent, cur))
 		goto error;
-#else // 부모의 사용자 주소 공간을 자식에게 복사하는 과정 - VM을 사용하지 않는 경우
+#else
 	if (!pml4_for_each(cur->parent->pml4, duplicate_pte, cur->parent))
-		// 부모의 페이지 테이블(pml4)을 하나씩 순회하며, 각각의 유저 페이지(va, pte)를 duplicate_pte()에 넘기는 구조
 		goto error;
 #endif
 
- 	/*3. 부모가 오픈한 파일 디스크립터 목록*/
-	
-	/* TODO: Your code goes here.
-	 * TODO: Hint) To duplicate the file object, use `file_duplicate`
-	 * TODO:       in include/filesys/file.h. Note that parent should not return
-	 * TODO:       from the fork() until this function successfully duplicates
-	 * TODO:       the resources of parent.*/
-	// 힌트: 부모의 열려있는 파일들을 복제할 때는 file_duplicate()를 사용하라.
-
-	
-	// [*]3-Q
+	/* 5. 파일 디스크립터 복제 */
 	for (int i = 2; i < OPEN_LIMIT; i++) {
 		struct file *parent_file = cur->parent->fd_table[i];
-		if (parent_file != NULL){
+		if (parent_file != NULL) {
 			struct file *child_file = file_duplicate(parent_file);
-			if (child_file == NULL){
-				// 부모의 파일 중 하나라도 복제 실패하면 프로세스 복제 실패로 간주,
+			if (child_file == NULL) {
 				succ = false;
 				printf("out of memory during file_duplicate at %d\n", i);
 				goto error;
 			}
 			cur->fd_table[i] = child_file;
-		}
-		else{
+		} else {
 			cur->fd_table[i] = NULL;
 		}
 	}
 	cur->next_fd = cur->parent->next_fd;
+
 	process_init();
 
-		// 중요한 점은, 부모는 자식이 모든 자원 복제에 성공했을 때에만 fork()에서 리턴해야 한다. 하나라도 삐끗하면 succ=flase 처리 해야함.
-
-	/* Finally, switch to the newly created process. */
-	// 자식 프로세스의 준비가 끝났다면, 실제 유저모드로 진입 (do_iret) 시도한다.
-	cur->tf.R.rax=0;
+	/* 6. 자식 프로세스의 레지스터 설정 및 리턴 */
+	cur->tf.R.rax = 0;
 	cur->exit_status = 0;
 	sema_up(&cur->parent->fork_sema);
 	if (succ)
 		do_iret(&cur->tf);
+
 error:
+	/* 🔧 메모리 누수 방지: fd_table 해제 */
+	if (cur->fd_table)
+		palloc_free_multiple(cur->fd_table, FDT_PAGES);
 	cur->exit_status = -1;
 	sema_up(&cur->parent->fork_sema);
 	thread_exit();

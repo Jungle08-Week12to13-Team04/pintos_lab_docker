@@ -99,7 +99,7 @@ struct supplemental_page_table {
 };
 
 struct frame *frame_create (void *kva);
-void *vm_get_frame (void);
+struct frame *vm_get_frame(void);
 struct frame *vm_get_victim (void);
 void *vm_do_eviction (void);
 

@@ -38,6 +38,11 @@
         "exception.h": "c",
         "inspect.h": "c",
         "round.h": "c",
-        "memory_resource": "c"
+        "memory_resource": "c",
+        "deque": "c",
+        "string": "c",
+        "vector": "c",
+        "mmu.h": "c",
+        "process.h": "c"
     }
 }

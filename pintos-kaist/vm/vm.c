@@ -5,11 +5,12 @@
 #include "threads/thread.h"
 #include "threads/vaddr.h" 
 #include "userprog/process.h" 
-
+#include "threads/mmu.h"
 #include "threads/malloc.h"
 #include "vm/vm.h"
 #include "vm/inspect.h"
 #include "filesys/file.h"
+#include "threads/pte.h"  // PTE_W, is_writable
 /* 각 서브시스템의 초기화 코드를 호출하여 가상 메모리 서브시스템을 초기화합니다. */
 
 struct disk *swap_disk;//[*]3-L
@@ -53,7 +54,7 @@ page_get_type (struct page *page) {
 }
 
 /* 헬퍼 함수들 */
-static struct frame *vm_get_victim (void);
+struct frame *vm_get_victim (void);
 static bool vm_do_claim_page (struct page *page);
 static struct frame *vm_evict_frame (void);
 
@@ -141,20 +142,20 @@ spt_remove_page (struct supplemental_page_table *spt, struct page *page) {
 }
 
 /* 교체(eviction)될 struct frame을 가져옵니다. */
-static struct frame *
-vm_get_victim (void) {
-  struct frame *victim = NULL;
+// static struct frame *
+// vm_get_victim (void) {
+//   struct frame *victim = NULL;
 
-  lock_acquire(&frame_table_lock);
-  if (!list_empty(&frame_table)) {
-    // 단순히 첫 프레임을 victim으로
-    struct list_elem *e = list_pop_front(&frame_table);
-    victim = list_entry(e, struct frame, elem);
-  }
-  lock_release(&frame_table_lock);
+//   lock_acquire(&frame_table_lock);
+//   if (!list_empty(&frame_table)) {
+//     // 단순히 첫 프레임을 victim으로
+//     struct list_elem *e = list_pop_front(&frame_table);
+//     victim = list_entry(e, struct frame, elem);
+//   }
+//   lock_release(&frame_table_lock);
 
-  return victim;
-}
+//   return victim;
+// }
 
 
 /* 하나의 페이지를 교체하고 해당 frame을 반환합니다.
@@ -172,36 +173,6 @@ vm_evict_frame (void) {
 
   return victim;
 }
-
-
-/* palloc()을 통해 frame을 얻습니다. 사용 가능한 페이지가 없다면 페이지를 교체(evict)한 후 반환합니다.
- * 이 함수는 항상 유효한 주소를 반환합니다. 즉, 사용자 풀 메모리가 가득 찼을 때도,
- * 이 함수는 frame을 교체하여 가용 메모리를 확보합니다. */
-// static struct frame *
-// vm_get_frame (void) {
-//   void *kva = palloc_get_page(PAL_USER);
-//   if (kva == NULL) {
-//     struct frame *victim = vm_evict_frame();
-//     kva = victim->kva;
-
-// 	// [*]3-B. 추가
-// 	if (victim->page != NULL)
-//         victim->page->frame = NULL;
-//     free(victim);
-//   }
-
-//   struct frame *frame = malloc(sizeof(struct frame));
-//   if (frame == NULL) PANIC("frame alloc failed");
-//   memset(frame, 0, sizeof(struct frame));
-//   frame->kva = kva;
-
-//   //Frame Table에 등록
-//   lock_acquire(&frame_table_lock);
-//   list_push_back(&frame_table, &frame->elem);
-//   lock_release(&frame_table_lock);
-
-//   return frame;
-// }
 
 
 // [*]3-B. 스택 확장 함수
@@ -292,59 +263,70 @@ vm_stack_growth (void *addr UNUSED) {
 // }
 
 bool
-vm_try_handle_fault (struct intr_frame *f, void *addr,
-                     bool user, bool write, bool not_present) {
-  struct supplemental_page_table *spt = &thread_current ()->spt;
+vm_try_handle_fault(struct intr_frame *f, void *addr, bool user, bool write, bool not_present) {
+	struct thread *curr = thread_current();
+	struct supplemental_page_table *spt = &curr->spt;
+	struct page *page = spt_find_page(spt, addr);
 
-  if (addr == NULL || is_kernel_vaddr (addr))
-    return false;
+	// [*]1. 스택 자동 확장
+	if (page == NULL) {
+		void *rsp = user ? f->rsp : curr->save_rsp;
+		if (user && write && is_user_vaddr(addr) &&
+		    addr >= rsp - 32 &&
+		    addr >= USER_STACK - (1 << 20) &&
+		    addr < USER_STACK) {
+			vm_stack_growth(addr);
+			return true;
+		}
+		return false;
+	}
 
-  void *rsp = is_kernel_vaddr (f->rsp) ? thread_current()->save_rsp : f->rsp;
+	// [*]2. lazy load 또는 swap-in
+	if (not_present) {
+		return vm_claim_page(addr);
+	}
 
-  struct page *page = spt_find_page (spt, addr);
+	// [*]3. COW 처리
+	if (write && !pml4_is_writable(curr->pml4, addr)) {
+		struct frame *src_frame = page->frame;
+		ASSERT(src_frame != NULL);
 
-  if (page) {
-    // ──── [*] COW 조건: 쓰기 요청인데, PTE는 read-only ────
-    if (write && !pml4_is_writable (thread_current()->pml4, page->va)) {
-      struct frame *fr = page->frame;
+		if (src_frame->ref_cnt == 1) {
+			pml4_set_page(curr->pml4, page->va, src_frame->kva, true);
+			page->writable = true;
+			return true;
+		}
 
-      if (fr->ref_cnt > 1) {
-        // ★ 공유 중인 프레임 → 새 프레임 만들어서 복사
-        void *new_kva = palloc_get_page (PAL_USER | PAL_ZERO);
-        if (new_kva == NULL) return false;
+		// 공유 프레임이므로 새 페이지 복사
+		void *new_kva = palloc_get_page(PAL_USER);
+		if (new_kva == NULL)
+			return false;
+		memcpy(new_kva, src_frame->kva, PGSIZE);
 
-        memcpy (new_kva, fr->kva, PGSIZE);
-        fr->ref_cnt--;
+		struct frame *new_frame = frame_create(new_kva);
+		if (new_frame == NULL) {
+			palloc_free_page(new_kva);  // 🔧 누수 방지
+			return false;
+		}
 
-        struct frame *new_fr = frame_create (new_kva);
-        new_fr->ref_cnt = 1;
-        new_fr->page    = page;
-        page->frame     = new_fr;
+		new_frame->page = page;
+		page->frame = new_frame;
+		page->writable = true;
 
-        pml4_set_page (thread_current()->pml4, page->va, new_kva, true);
-        return true;
-      }
+		if (!pml4_set_page(curr->pml4, page->va, new_kva, true)) {
+			palloc_free_page(new_kva);  // 🔧 누수 방지
+			free(new_frame);            // 🔧 frame 구조체 해제 필요 시
+			return false;
+		}
 
-      // ref_cnt == 1 → 그냥 PTE만 writable로 바꿔주면 됨
-      pml4_set_page (thread_current()->pml4, page->va, fr->kva, true);
-      return true;
-    }
+		ASSERT(src_frame->ref_cnt > 1);
+		src_frame->ref_cnt--;
+		return true;
+	}
 
-    // ──── 기존 Lazy Loading 로직 ────
-    if (!page->writable && write)
-      return false;
-    return vm_do_claim_page (page);
-  }
-
-  // ──── Stack growth ────
-  if (user && write &&
-      addr >= rsp - 32 && addr >= (void *)(USER_STACK - (1 << 20)) && addr < USER_STACK) {
-    vm_stack_growth (addr);
-    return true;
-  }
-
-  return false;
+	return false;
 }
+
 
 
 
@@ -370,40 +352,30 @@ vm_claim_page (void *va UNUSED) {
 	return vm_do_claim_page (page);
 }
 
-/* Claim the PAGE and set up the mmu. */
 static bool
 vm_do_claim_page (struct page *page) {
-	// struct frame *frame = vm_get_frame ();
+	struct frame *frame = vm_get_frame ();  // frame 받아오기
+	ASSERT(frame != NULL);                 // 필수 조건 확인
 
-	// /* Set links */
-	// frame->page = page;
-	// page->frame = frame;
+	// 양방향 연결
+	frame->page = page;
+	page->frame = frame;
 
-	void *kva = vm_get_frame ();                   // frame_create() 내부에서 frame 등록됨
-	struct frame *frame = page->frame;             // frame_create() 안에서 이미 연결되었음
-	ASSERT (frame != NULL);
-
-
-	/* TODO: 페이지의 VA를 프레임의 PA에 매핑하기 위한 페이지 테이블 엔트리를 삽입합니다. */
-	// [*]3-B. 가상 주소와 물리 주소를 매핑
+	/* 페이지의 VA를 프레임의 PA에 매핑하기 위한 페이지 테이블 엔트리를 삽입합니다. */
 	bool writable = page->writable;
-	// pml4_set_page() 실패 시 처리 추가
-	if (! pml4_set_page(thread_current()->pml4, page->va, frame->kva, writable)){
+	if (!pml4_set_page(thread_current()->pml4, page->va, frame->kva, writable)) {
+		// 매핑 실패 시 메모리 해제
 		free(frame);
 		return false;
 	}
 
-	return swap_in (page, frame->kva);
+	// 스왑 인
+	return swap_in(page, frame->kva);
 }
+
+
 
 /* 새로운 보조 페이지 테이블(supplemental page table)을 초기화합니다. */
-void
-supplemental_page_table_init (struct supplemental_page_table *spt UNUSED) {
-	// struct hash 타입의 해시 테이블 객체를 초기화
-	hash_init(&spt->spt_hash, page_hash, page_less, NULL); // [*]3-B. spt 초기화
-}
-
-/* 보조 페이지 테이블을 src에서 dst로 복사합니다. */
 bool
 supplemental_page_table_copy (struct supplemental_page_table *dst,
                               struct supplemental_page_table *src,
@@ -437,6 +409,11 @@ supplemental_page_table_copy (struct supplemental_page_table *dst,
               free (aux);
               return false;
           }
+
+          // 🔥 반드시 메모리에 할당해야 이후 접근에서 page fault 안 남
+          if (!vm_claim_page(uva))
+              return false;
+
           continue;
       }
 
@@ -444,11 +421,15 @@ supplemental_page_table_copy (struct supplemental_page_table *dst,
       if (!vm_alloc_page (src_p->vm_type, uva, false))  // 자식은 readonly로
           return false;
 
+      if (!vm_claim_page(uva))  // 🔥 자식도 실제 프레임 받아야 함
+          return false;
+
       struct page *dst_p = spt_find_page (dst, uva);
       ASSERT (dst_p != NULL);
 
       dst_p->frame         = src_p->frame;
       src_p->frame->ref_cnt++;
+
       pml4_set_page (parent->pml4, uva, src_p->frame->kva, false);
       pml4_set_page (child->pml4, uva, src_p->frame->kva, false);
 
@@ -456,6 +437,7 @@ supplemental_page_table_copy (struct supplemental_page_table *dst,
   }
   return true;
 }
+
 
 // [*]3-B. 추가
 void hash_page_destroy(struct hash_elem *e, void *aux)
@@ -501,31 +483,49 @@ page_less(const struct hash_elem *a_, const struct hash_elem *b_, void *aux UNUS
 
 /*---------- [*]3-Q ----------*/
 
-struct frame *
-frame_create (void *kva) {
-  struct frame *fr = malloc (sizeof *fr);
-  ASSERT (fr != NULL);
+// struct frame *frame_create (void *kva) {
+//   struct frame *fr = malloc (sizeof *fr);
+//   ASSERT (fr != NULL);
 
-  fr->kva     = kva;
-  fr->page    = NULL;
-  fr->ref_cnt = 1;       // 기본 참조 수 = 1
-  fr->pinned  = false;
+//   fr->kva     = kva;
+//   fr->page    = NULL;
+//   fr->ref_cnt = 1;       // 기본 참조 수 = 1
+//   fr->pinned  = false;
 
-  lock_acquire (&frame_table_lock);
-  list_push_back (&frame_table, &fr->elem);
-  lock_release (&frame_table_lock);
+//   lock_acquire (&frame_table_lock);
+//   list_push_back (&frame_table, &fr->elem);
+//   lock_release (&frame_table_lock);
 
-  return fr;
+//   return fr;
+// }
+
+struct frame *frame_create(void *kva) {
+  struct frame *frame = malloc(sizeof(struct frame));
+  if (frame == NULL) PANIC("frame alloc failed");
+  memset(frame, 0, sizeof(struct frame));
+
+  frame->kva = kva;
+  frame->ref_cnt = 1;  // ✅ 명시적으로 참조 카운트 1로 초기화
+
+  lock_acquire(&frame_table_lock);
+  list_push_back(&frame_table, &frame->elem);
+  lock_release(&frame_table_lock);
+
+  return frame;
 }
 
-void *
-vm_get_frame (void) {
-  void *kva = palloc_get_page (PAL_USER | PAL_ZERO);
-  if (kva == NULL)
-    kva = vm_do_eviction ();   // 스왑아웃 수행
 
-  struct frame *fr = frame_create (kva);
-  return kva;
+
+struct frame *vm_get_frame(void) {
+  void *kva = palloc_get_page(PAL_USER | PAL_ZERO);
+  if (kva == NULL)
+    kva = vm_do_eviction();
+
+  if (kva == NULL)
+    return NULL;  // 방어적 처리
+
+  struct frame *fr = frame_create(kva);
+  return fr;
 }
 
 void *
@@ -558,4 +558,28 @@ vm_get_victim (void) {
   }
   lock_release (&frame_table_lock);
   PANIC ("no victim frame found");
+}
+
+
+
+/* Returns true if the PTE for upage in pml4 is writable */
+bool
+pml4_is_writable(uint64_t *pml4, const void *upage) {
+  uint64_t *pte = pml4e_walk(pml4, (uint64_t) upage, false);
+  return pte != NULL && is_writable(pte);
+}
+
+
+void
+supplemental_page_table_init(struct supplemental_page_table *spt) {
+	hash_init(&spt->spt_hash, page_hash, page_less, NULL);
+}
+
+
+void frame_destroy(struct frame *f) {
+    ASSERT(f != NULL);
+    if (--f->ref_cnt == 0) {
+        palloc_free_page(f->kva);
+        free(f);
+    }
 }
