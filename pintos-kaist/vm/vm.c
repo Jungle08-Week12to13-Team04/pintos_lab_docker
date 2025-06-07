@@ -235,18 +235,20 @@ vm_handle_wp (struct page *page UNUSED) {
 /* vm/vm.c */
 
 /* vm_try_handle_fault 함수 내부의 권한 체크 부분을 수정합니다. */
+/* vm.c */
+
 bool vm_try_handle_fault(struct intr_frame *f, void *addr, bool user, bool write, void *esp) {
     struct supplemental_page_table *spt = &thread_current()->spt;
     struct page *page = spt_find_page(spt, addr);
 
+    // 1. 페이지가 존재하지 않으면 실패
     if (page == NULL) {
         return false;
     }
 
-    /* --- 기존 권한 체크 로직을 아래 로직으로 변경 --- */
+    // 2. 쓰기 금지된 페이지에 쓰기 시도 (COW 처리)
     if (write && !page->writable) {
-        // 쓰기 권한이 없는데 쓰려고 할 때, COW인지 확인
-        if (page->frame->ref_count > 1) { // ref_count가 1보다 크면 COW 대상
+        if (page->frame->ref_count > 1) {
             // 새로운 프레임 할당
             void *new_kva = palloc_get_page(PAL_USER);
             if (new_kva == NULL) {
@@ -257,17 +259,16 @@ bool vm_try_handle_fault(struct intr_frame *f, void *addr, bool user, bool write
             memcpy(new_kva, page->frame->kva, PGSIZE);
 
             // 페이지 테이블 업데이트 (새 프레임, 쓰기 가능)
-            pml4_set_page(thread_current()->pml4, page->va, new_kva, true);
+            if (!pml4_set_page(thread_current()->pml4, page->va, new_kva, true)) {
+                palloc_free_page(new_kva);
+                return false;
+            }
 
-            // ‼️ 기존 프레임의 참조 카운트 감소 (락으로 보호)
+            // 프레임 관리 로직
             lock_acquire(&frame_table_lock);
-            // 기존 프레임의 참조 카운트 감소
-            page->frame->ref_count--;
+            page->frame->ref_count--; // 기존 프레임 참조 감소
             lock_release(&frame_table_lock);
 
-
-            // page 구조체가 새로운 프레임을 가리키도록 변경
-            // (새로운 frame 구조체를 할당하고 kva와 page를 설정해야 함)
             struct frame *new_frame = (struct frame *)malloc(sizeof(struct frame));
             if(new_frame == NULL){
                 palloc_free_page(new_kva);
@@ -276,26 +277,30 @@ bool vm_try_handle_fault(struct intr_frame *f, void *addr, bool user, bool write
             new_frame->kva = new_kva;
             new_frame->page = page;
             new_frame->ref_count = 1;
-            page->frame = new_frame;
-            page->writable = true; // 이제 이 페이지는 쓰기 가능
 
             lock_acquire(&frame_table_lock);
             list_push_back(&frame_table, &new_frame->elem);
             lock_release(&frame_table_lock);
-			
+            
+            page->frame = new_frame;
+            page->writable = true;
+
             return true; // COW 처리 성공
         }
     }
-    /* --- 여기까지 변경 --- */
 
-
+    // 3. 페이지에 할당된 프레임이 없는 경우 (Lazy Loading 또는 Swap-in)
     if (page->frame == NULL) {
-        // ... (기존의 lazy-load 및 swap-in 로직) ...
+        return vm_do_claim_page(page); // ‼️ 이 부분이 누락되어 있었음
+    }
+
+    // 4. 스택 확장 여부 확인 (필요 시)
+    if (esp != NULL && (USER_STACK - (1 << 20) < addr && addr < USER_STACK && esp <= addr + 8)) {
+         vm_stack_growth(addr);
     }
 
     return true;
 }
-
 /* 페이지를 해제합니다.
  * 이 함수는 수정하지 마세요. */
 void
