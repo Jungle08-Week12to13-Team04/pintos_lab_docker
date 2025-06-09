@@ -492,9 +492,9 @@ page_less(const struct hash_elem *a_, const struct hash_elem *b_, void *aux UNUS
         공유 프레임 ref_cnt 를 최종 정리한다.
    호출 시점: supplemental_page_table_kill() 바로 **다음**
  ------------------------------------------------------------- */
-static void
+void
 spt_drop_pte_mappings (struct supplemental_page_table *spt, 
-                       pagedir_t *pml4)
+                       uint64_t *pml4)
 {
     struct hash_iterator it;
     hash_first (&it, &spt->spt_hash);
@@ -503,7 +503,7 @@ spt_drop_pte_mappings (struct supplemental_page_table *spt,
         struct page *page = hash_entry (hash_cur (&it), struct page, hash_elem);
 
         /* 매핑이 존재했다면 present 비트를 내리고 ref_cnt-- */
-        if (pml4_is_present (pml4, page->va)) {
+        if (pml4_get_page (pml4, page->va) != NULL) {
             pml4_clear_page (pml4, page->va);
 
             if (page->frame != NULL) {
