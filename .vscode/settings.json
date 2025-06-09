@@ -39,6 +39,7 @@
         "inspect.h": "c",
         "round.h": "c",
         "memory_resource": "c",
-        "process.h": "c"
+        "process.h": "c",
+        "directory.h": "c"
     }
 }

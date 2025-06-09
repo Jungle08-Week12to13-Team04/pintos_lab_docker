@@ -84,7 +84,7 @@ file_backed_swap_out (struct page *page) {
 
     // CHECK dirty page
     if(pml4_is_dirty(thread_current()->pml4, page->va)){
-        file_write_at(segment_aux->file, page->va, segment_aux->page_read_bytes, segment_aux->offset);
+        file_write_at(segment_aux->file, page->frame->kva, segment_aux->page_read_bytes, segment_aux->offset);
         pml4_set_dirty (thread_current()->pml4, page->va, 0);
     }
 
@@ -104,7 +104,7 @@ file_backed_destroy(struct page *page) {
 
 		// dirty 여부 확인 후 파일에 반영
 		if (pml4_is_dirty(thread_current()->pml4, page->va)) {
-			file_write_at(segment_aux->file, page->va, segment_aux->page_read_bytes, segment_aux->offset);
+			file_write_at(segment_aux->file, page->frame->kva, segment_aux->page_read_bytes, segment_aux->offset);
 			pml4_set_dirty(thread_current()->pml4, page->va, 0);
 		}
 	}
@@ -163,7 +163,7 @@ void do_munmap(void *addr) {
 
 
         if(pml4_is_dirty(thread_current()->pml4, page->va)) {
-            file_write_at(segment_aux->file, addr, segment_aux->page_read_bytes, segment_aux->offset); 
+            file_write_at(segment_aux->file, page->frame->kva, segment_aux->page_read_bytes, segment_aux->offset); 
             pml4_set_dirty (thread_current()->pml4, page->va, 0);
         }
 
