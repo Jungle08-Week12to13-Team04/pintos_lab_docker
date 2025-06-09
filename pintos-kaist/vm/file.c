@@ -24,7 +24,7 @@ static const struct page_operations file_ops = {
 };
 
 extern struct list frame_table;
-extern struct lock frame_table_lock;
+extern struct lock frame_tabl                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          e_lock;
 
 /* 파일 기반 가상 메모리(file vm)의 초기화 함수 */
 void
