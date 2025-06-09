@@ -468,36 +468,62 @@ void process_exit(void)
 }
 
 /* Free the current process's resources. */
+// static void
+// process_cleanup(void)
+// {
+// 	struct thread *curr = thread_current();
+
+// #ifdef VM
+
+// 	if(!hash_empty(&curr->spt.spt_hash)) 
+// 		supplemental_page_table_kill (&curr->spt);
+	
+// #endif
+
+// 	uint64_t *pml4;
+// 	/* Destroy the current process's page directory and switch back
+// 	 * to the kernel-only page directory. */
+// 	pml4 = curr->pml4;
+// 	if (pml4 != NULL)
+// 	{
+// 		/* Correct ordering here is crucial.  We must set
+// 		 * cur->pagedir to NULL before switching page directories,
+// 		 * so that a timer interrupt can't switch back to the
+// 		 * process page directory.  We must activate the base page
+// 		 * directory before destroying the process's page
+// 		 * directory, or our active page directory will be one
+// 		 * that's been freed (and cleared). */
+// 		curr->pml4 = NULL;
+// 		pml4_activate(NULL);
+// 		pml4_destroy(pml4);
+// 	}
+// }
+
+/* [*]3-Q */
 static void
-process_cleanup(void)
+process_cleanup (void)
 {
-	struct thread *curr = thread_current();
+    struct thread *curr = thread_current ();
 
 #ifdef VM
+    /* ① SPT 내 page 메타데이터 해제 */
+    if (!hash_empty (&curr->spt.spt_hash))
+        supplemental_page_table_kill (&curr->spt);
 
-	if(!hash_empty(&curr->spt.spt_hash)) 
-		supplemental_page_table_kill (&curr->spt);
-	
+    /* ② 🔸 남아 있는 모든 PTE를 없애고 ref_cnt 정리 */
+    spt_drop_pte_mappings (&curr->spt, curr->pml4);
 #endif
 
-	uint64_t *pml4;
-	/* Destroy the current process's page directory and switch back
-	 * to the kernel-only page directory. */
-	pml4 = curr->pml4;
-	if (pml4 != NULL)
-	{
-		/* Correct ordering here is crucial.  We must set
-		 * cur->pagedir to NULL before switching page directories,
-		 * so that a timer interrupt can't switch back to the
-		 * process page directory.  We must activate the base page
-		 * directory before destroying the process's page
-		 * directory, or our active page directory will be one
-		 * that's been freed (and cleared). */
-		curr->pml4 = NULL;
-		pml4_activate(NULL);
-		pml4_destroy(pml4);
-	}
+    /* ---------------- 커널 전환 & pml4 파괴 ---------------- */
+    uint64_t *pml4 = curr->pml4;
+    if (pml4 != NULL)
+    {
+        curr->pml4 = NULL;          /* 타이머 인터럽트가 돌아오지 못하게 */
+        pml4_activate (NULL);       /* 커널 전용 pml4 로 교체           */
+        pml4_destroy (pml4);        /* 사용자 pml4 자체 메모리 해제      */
+    }
 }
+
 
 /* Sets up the CPU for running user code in the nest thread.
  * This function is called on every context switch. */

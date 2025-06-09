@@ -282,51 +282,12 @@ vm_try_handle_fault (struct intr_frame *f UNUSED, void *addr UNUSED,
 	}
 }
 
-// /* 페이지를 해제합니다.
-//  * 이 함수는 수정하지 마세요. */
-// void
-// vm_dealloc_page (struct page *page) {
-// 	destroy (page);
-// 	free (page);
-// }
-
-// [*]3-Q
-/* ==== vm/vm.c ==== */
+/* 페이지를 해제합니다.
+ * 이 함수는 수정하지 마세요. */
 void
 vm_dealloc_page (struct page *page) {
-    if (page == NULL) return;
-
-    /* --------------------------------------------------------
-       1. 공유 프레임 참조 수 관리
-       -------------------------------------------------------- */
-    if (page->frame != NULL) {
-        page->frame->ref_cnt--;
-
-        /* 🔸 더 이상 공유하지 않는 마지막 참조 */
-        if (page->frame->ref_cnt == 0) {
-
-            /* (1) 먼저 현재 프로세스의 PML4에서 매핑 삭제
-                   → 이후 pt_destroy() 가 두 번 해제하지 않도록.      */
-            pml4_clear_page (thread_current ()->pml4, page->va);
-
-            /* (2) frame table 에서 제거 & 물리 메모리 반납             */
-            list_remove (&page->frame->frame_elem);
-            palloc_free_page (page->frame->kva);
-            free (page->frame);
-        }
-
-        page->frame = NULL;        /* 역참조 끊기 */
-    }
-
-    /* --------------------------------------------------------
-       2. 타입별 추가 정리 (swap slot 반환 등)
-       -------------------------------------------------------- */
-    destroy (page);
-
-    /* --------------------------------------------------------
-       3. page 메타데이터 구조체 해제
-       -------------------------------------------------------- */
-    free (page);
+	destroy (page);
+	free (page);
 }
 
 
@@ -524,4 +485,37 @@ page_less(const struct hash_elem *a_, const struct hash_elem *b_, void *aux UNUS
     const struct page *b = hash_entry(b_, struct page, hash_elem);
 
     return a->va < b->va;
+}
+
+/* -------------------------[*]3-Q----------------------------
+   보조: SPT에 남아 있는 모든 VA의 PTE를 지우고
+        공유 프레임 ref_cnt 를 최종 정리한다.
+   호출 시점: supplemental_page_table_kill() 바로 **다음**
+ ------------------------------------------------------------- */
+static void
+spt_drop_pte_mappings (struct supplemental_page_table *spt, 
+                       pagedir_t *pml4)
+{
+    struct hash_iterator it;
+    hash_first (&it, &spt->spt_hash);
+
+    while (hash_next (&it)) {
+        struct page *page = hash_entry (hash_cur (&it), struct page, hash_elem);
+
+        /* 매핑이 존재했다면 present 비트를 내리고 ref_cnt-- */
+        if (pml4_is_present (pml4, page->va)) {
+            pml4_clear_page (pml4, page->va);
+
+            if (page->frame != NULL) {
+                struct frame *f = page->frame;
+                f->ref_cnt--;
+
+                if (f->ref_cnt == 0) {              /* 최종 해제 시점 */
+                    list_remove (&f->frame_elem);
+                    palloc_free_page (f->kva);
+                    free (f);
+                }
+            }
+        }
+    }
 }

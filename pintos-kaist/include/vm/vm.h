@@ -126,6 +126,8 @@ void vm_dealloc_page (struct page *page);
 bool vm_claim_page (void *va);
 enum vm_type page_get_type (struct page *page);
 
+void spt_drop_pte_mappings (struct supplemental_page_table *spt, uint64_t *pml4);
+
 // [*]3-B. 추가
 unsigned page_hash(const struct hash_elem *p_, void *aux UNUSED);
 bool page_less(const struct hash_elem *a_, const struct hash_elem *b_, void *aux);
