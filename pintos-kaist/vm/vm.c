@@ -492,8 +492,11 @@ page_less(const struct hash_elem *a_, const struct hash_elem *b_, void *aux UNUS
         공유 프레임 ref_cnt 를 최종 정리한다.
    호출 시점: supplemental_page_table_kill() 바로 **다음**
  ------------------------------------------------------------- */
+/* ==== vm/vm.c ==== */
+#include "threads/mmu.h"            /* 🔸 is_user_vaddr, pml4_* helpers */
+
 void
-spt_drop_pte_mappings (struct supplemental_page_table *spt, 
+spt_drop_pte_mappings (struct supplemental_page_table *spt,
                        uint64_t *pml4)
 {
     struct hash_iterator it;
@@ -502,7 +505,11 @@ spt_drop_pte_mappings (struct supplemental_page_table *spt,
     while (hash_next (&it)) {
         struct page *page = hash_entry (hash_cur (&it), struct page, hash_elem);
 
-        /* 매핑이 존재했다면 present 비트를 내리고 ref_cnt-- */
+        /* ① user 영역 주소만 처리 */
+        if (!is_user_vaddr (page->va))
+            continue;
+
+        /* ② 매핑이 있으면 clear & ref_cnt-- */
         if (pml4_get_page (pml4, page->va) != NULL) {
             pml4_clear_page (pml4, page->va);
 
@@ -510,7 +517,7 @@ spt_drop_pte_mappings (struct supplemental_page_table *spt,
                 struct frame *f = page->frame;
                 f->ref_cnt--;
 
-                if (f->ref_cnt == 0) {              /* 최종 해제 시점 */
+                if (f->ref_cnt == 0) {              /* 마지막 참조 */
                     list_remove (&f->frame_elem);
                     palloc_free_page (f->kva);
                     free (f);
