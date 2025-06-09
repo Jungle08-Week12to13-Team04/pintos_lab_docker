@@ -517,11 +517,12 @@ spt_drop_pte_mappings (struct supplemental_page_table *spt,
                 struct frame *f = page->frame;
                 f->ref_cnt--;
 
-                if (f->ref_cnt == 0) {              /* 마지막 참조 */
-                    list_remove (&f->frame_elem);
-                    palloc_free_page (f->kva);
-                    free (f);
-                }
+	            if (f->ref_cnt == 0) {              /* 🔸 마지막 참조 */
+    	            list_remove (&f->frame_elem);
+        	        palloc_free_page (f->kva);
+            	    free (f);
+                	page->frame = NULL;             /* 🔑 더 이상 사용 금지 */
+	            }
             }
         }
     }
