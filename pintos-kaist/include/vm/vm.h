@@ -71,6 +71,7 @@ struct frame {
     struct page *page; // 연결된 유저 페이지
     struct list_elem frame_elem; // frame_table에서 연결될 list 요소
     bool pinned; // 교체 보호 여부
+	int ref_cnt; //[*]3-Q 동일 프레임을 공유하는 페이지 수  
 };
 
 // [*]3-B. 추가
