@@ -291,23 +291,42 @@ vm_try_handle_fault (struct intr_frame *f UNUSED, void *addr UNUSED,
 // }
 
 // [*]3-Q
+/* ==== vm/vm.c ==== */
 void
-vm_dealloc_page (struct page *page) {                  // 페이지 해제
+vm_dealloc_page (struct page *page) {
     if (page == NULL) return;
 
-    /* 🔸 공유 프레임 참조 수 관리 */
+    /* --------------------------------------------------------
+       1. 공유 프레임 참조 수 관리
+       -------------------------------------------------------- */
     if (page->frame != NULL) {
-        page->frame->ref_cnt--;                        // 참조 감소
-        if (page->frame->ref_cnt == 0) {               // 더이상 공유 X
-            list_remove (&page->frame->frame_elem);    // 프레임 테이블에서 제거
-            palloc_free_page (page->frame->kva);       // 물리 메모리 반납
-            free (page->frame);                        // 메타데이터 반납
+        page->frame->ref_cnt--;
+
+        /* 🔸 더 이상 공유하지 않는 마지막 참조 */
+        if (page->frame->ref_cnt == 0) {
+
+            /* (1) 먼저 현재 프로세스의 PML4에서 매핑 삭제
+                   → 이후 pt_destroy() 가 두 번 해제하지 않도록.      */
+            pml4_clear_page (thread_current ()->pml4, page->va);
+
+            /* (2) frame table 에서 제거 & 물리 메모리 반납             */
+            list_remove (&page->frame->frame_elem);
+            palloc_free_page (page->frame->kva);
+            free (page->frame);
         }
-        page->frame = NULL;                            // 역참조 해제
+
+        page->frame = NULL;        /* 역참조 끊기 */
     }
 
-    destroy (page);                                    // 타입별 cleanup
-    free (page);                                       // page 구조체 반납
+    /* --------------------------------------------------------
+       2. 타입별 추가 정리 (swap slot 반환 등)
+       -------------------------------------------------------- */
+    destroy (page);
+
+    /* --------------------------------------------------------
+       3. page 메타데이터 구조체 해제
+       -------------------------------------------------------- */
+    free (page);
 }
 
 
