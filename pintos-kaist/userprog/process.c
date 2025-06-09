@@ -30,6 +30,48 @@ static bool load(const char *file_name, struct intr_frame *if_);
 static void initd(void *f_name);
 static void __do_fork(void *);
 
+
+static struct thread *
+lookup_child (struct thread *parent, tid_t child_tid)   /* ← 반환형을 thread* */
+{
+    for (struct list_elem *e = list_begin (&parent->child_list);
+         e != list_end (&parent->child_list);
+         e = list_next (e))
+    {
+        struct thread *child = list_entry (e, struct thread, child_elem);
+        if (child->tid == child_tid)
+            return child;
+    }
+    return NULL;
+}
+
+
+/* Helper: tid 로 thread 구조체 찾기.
+   ready_list · all_list 어디에서든 검색할 수 있도록 all_list 사용. */
+static struct thread *
+get_thread_by_tid (tid_t tid)
+{
+    for (struct list_elem *e = list_begin (&all_list);
+         e != list_end (&all_list);
+         e = list_next (e))
+    {
+        struct thread *t = list_entry (e, struct thread, allelem);
+        if (t->tid == tid)
+            return t;
+    }
+    return NULL;
+}
+
+/* Helper: 부모->child_list 에 자식 노드 연결. */
+static void
+attach_child (struct thread *parent, struct thread *child)
+{
+    child->parent = parent;
+    list_push_back (&parent->child_list, &child->child_elem);
+}
+
+
+
 /* General process initializer for initd and other process. */
 static void
 process_init(void)
@@ -97,34 +139,44 @@ struct fork_info {
  *   ‣ thread_create() 로 자식 커널 스레드 생성
  *   ‣ 성공 시 wait/exit 교류용 wait_status 노드를 부모-자식에 연결
  * ------------------------------------------------------------------- */
+/* Creates a child thread that is an almost-exact copy of the calling
+   process.  A pointer to the caller’s interrupt frame (PARENT_IF) is
+   passed so that the child can clone register state.  On success,
+   returns child tid.  On failure, returns TID_ERROR. */
 tid_t
 process_fork (const char *name, struct intr_frame *parent_if)
 {
     struct thread *cur = thread_current ();
-    /* intr_frame 를 커널 힙에 복사해 자식 스레드 시작 인자로 넘긴다. */
+
+    /* --- 1. 현재 레지스터 상태를 커널 힙에 복사 --- */
     struct intr_frame *if_copy = malloc (sizeof *if_copy);
     if (if_copy == NULL)
         return TID_ERROR;
     *if_copy = *parent_if;
 
-    /* 자식 스레드 생성 ─ __do_fork() 가 유저 공간 메모리/레지스터를
-       그대로 복제해 준다. */
-    tid_t tid = thread_create (name,
-                               PRI_DEFAULT,
-                               __do_fork,
-                               if_copy);
-    if (tid == TID_ERROR) {
+    /* --- 2. 자식 스레드 생성 (__do_fork() 안에서 주소 공간 복제) --- */
+    tid_t tid = thread_create (name, PRI_DEFAULT, __do_fork, if_copy);
+    if (tid == TID_ERROR)
+    {
         free (if_copy);
         return TID_ERROR;
     }
 
-    /* ------------- 🔸 부모-자식 wait_status 연결 ------------- */
+    /* --- 3. 부모-자식 관계 및 동기화 구조 연결 --- */
     struct thread *child = get_thread_by_tid (tid);
     ASSERT (child != NULL);
-    attach_child (cur, child);          /* helper: §3 에서 구현 */
+
+    attach_child (cur, child);      /* child_list <-- child_elem */
+
+    /* wait()/exit() 동기화를 위한 필드 초기화 */
+    sema_init (&child->wait_sema, 0);   /* 부모 wait() 때 ↓ */
+    sema_init (&child->free_sema, 0);   /* 부모가 list_remove() 후 ↑ */
+    child->exited     = false;
+    child->exit_code  = -1;
 
     return tid;
 }
+
 
 #ifndef VM
 /* Duplicate the parent's address space by passing this function to the
@@ -424,27 +476,18 @@ int process_exec(void *f_name)
 int
 process_wait (tid_t child_tid)
 {
-    struct thread *curr = thread_current ();
-    struct wait_status *ws = lookup_child_ws (curr, child_tid);
+    struct thread *child = lookup_child (cur, child_tid);
+    if (child == NULL) return -1;            /* 내 자식이 아님 */
+    if (child->exited == false)
+        sema_down (&child->wait_sema);       /* 자식이 끝날 때까지 대기 */
 
-    /* 내 자식이 아니거나 이미 기다렸으면 오류 */
-    if (ws == NULL || ws->waited)
-        return -1;
+    int status = child->exit_code;
+    list_remove (&child->child_elem);        /* 노드 분리 */
+    sema_up (&child->free_sema);             /* 자식 자원 해제 허용 */
 
-    ws->waited = true;        /* 두 번 wait() 방지 */
-
-    /* 아직 자식이 안 끝났으면 대기 */
-    if (!ws->exited)
-        sema_down (&ws->sema);
-
-    int exit_code = ws->exit_code;
-
-    /* 부모가 책임지고 리스트에서 제거 + 메모리 반납 */
-    list_remove (&ws->elem);
-    free (ws);
-
-    return exit_code;
+    return status;
 }
+
 
 
 
@@ -482,37 +525,80 @@ process_wait (tid_t child_tid)
 
 // }
 
-static void
+/* Terminates the current user process.
+   Never returns.  (This runs in process context; thread_exit()
+   will switch to the scheduler.) */
+void
 process_exit (void)
 {
     struct thread *curr = thread_current ();
-    struct wait_status *ws = curr->wait_status;
+    struct wait_status *ws = curr->wait_status;   /* ★ child → parent 통로 */
 
-    /* -------- 1.  자식 → 부모 종료 통보 -------- */
-    if (ws != NULL) {
-        ws->exit_code = curr->exit_status;
+    /* ------------------------------------------------------------------
+       1.  자식 → 부모에게 “난 끝났어” 를 알린다.
+           - 부모가 아직 wait() 을 호출하지 않았으면, parent 쪽 wait()
+             에서 sema_down() 이 잠들어 있기 때문에 ↑ 깨운다.
+           - 부모가 이미 wait() 호출을 끝낸 뒤라면 waited 플래그가
+             true 이므로, 지금 바로 ws 를 free 해 준다.               */
+    if (ws != NULL)
+    {
+        enum intr_level old = intr_disable ();   /* 동시 접근 보호 */
+
+        ws->exit_code = curr->exit_status;   /* (sys_exit 에서 값 세팅) */
         ws->exited    = true;
-        sema_up (&ws->sema);          /* 알림만!  리스트는 건드리지 않음 */
+        sema_up (&ws->sema);                 /* 부모 측 sema_down() 깨우기 */
+
+        /* 부모가 이미 wait() 을 끝내고 ‘기다림 종료’ 표시(waited)를
+           해 두었다면, child 가 여기서 ws 까지 free 해 줘야 한다.  */
+        if (ws->waited)
+        {
+            list_remove (&ws->elem);         /* parent->child_list 에서 제거 */
+            free (ws);                       /* 동적 메모리 회수            */
+        }
+        intr_set_level (old);
     }
 
-    /* -------- 2.  (기존 자원 정리 루틴) -------- */
+    /* ------------------------------------------------------------------
+       2.  자식 입장에서 “아직 떠 있는 나의 자식들” 이 있으면
+           그들의 wait_status 중 parent 포인터를 NULL 로 바꿔
+           더 이상 자신(죽는 프로세스)을 참조하지 않도록 만든다.      */
+    while (!list_empty (&curr->child_list))
+    {
+        struct thread *child = list_entry (list_pop_front (&curr->child_list),
+                                           struct thread, child_elem);
+        if (child->wait_status != NULL)
+            child->wait_status->parent_dead = true;
+    }
+
 #ifdef VM
+    /* ------------------------------------------------------------------
+       3.  주소 공간 정리 (page table & SPT)                           */
     if (!hash_empty (&curr->spt.spt_hash))
         spt_drop_pte_mappings (&curr->spt, curr->pml4);
     if (!hash_empty (&curr->spt.spt_hash))
         supplemental_page_table_kill (&curr->spt);
 #endif
 
+    /* ------------------------------------------------------------------
+       4.  프로세스 page table 탈착 & 파괴                          */
     uint64_t *pml4 = curr->pml4;
-    if (pml4 != NULL) {
+    if (pml4 != NULL)
+    {
         curr->pml4 = NULL;
-        pml4_activate (NULL);
+        pml4_activate (NULL);   /* 커널 전용 PML4로 스왑 */
         pml4_destroy (pml4);
     }
 
-    /* 파일, fd, 기타 자원 해제 (기존 코드 유지) */
-    thread_exit ();   /* 절대 반환 안 함 */
+    /* ------------------------------------------------------------------
+       5.  열린 파일‧디렉터리 등 기타 자원 해제
+           (이미 구현돼 있는 close loop·fd_table 정리 코드 유지)       */
+    close_all_files ();         /* ← 프로젝트-2에서 구현한 헬퍼라고 가정 */
+
+    /* ------------------------------------------------------------------
+       6.  커널 스레드 종료 → scheduler 로 제어권 반환                 */
+    thread_exit ();             /* 이 아래로는 절대 실행되지 않음       */
 }
+
 
 
 
@@ -1095,17 +1181,3 @@ attach_child (struct thread *parent, struct thread *child)
     list_push_back (&parent->child_list, &ws->elem); /* 부모 리스트에 등록 */
 }
 
-static struct wait_status *
-lookup_child_ws (struct thread *parent, tid_t child_tid)
-{
-    struct list_elem *e;
-    for (e = list_begin (&parent->child_list);
-         e != list_end (&parent->child_list);
-         e = list_next (e))
-    {
-        struct wait_status *ws = list_entry (e, struct wait_status, elem);
-        if (ws->tid == child_tid)
-            return ws;
-    }
-    return NULL;
-}

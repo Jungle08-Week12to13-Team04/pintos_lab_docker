@@ -130,6 +130,7 @@ struct thread
 	struct list donations;	   //[*]1-2-3. 중요도 양도한 애 리스트
 	struct list_elem elem;    
 	struct list_elem d_elem;   //[*]1-2-3. 중요도 양도한 애 관리(prev, next)
+	
 
 	// [*]2-B,O 자식의 종료신호를 기다리는 필드
 	struct list child_list;				// 자식 프로세스 정보 리스트

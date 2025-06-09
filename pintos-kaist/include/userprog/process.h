@@ -21,11 +21,9 @@ bool setup_stack(struct intr_frame *if_);
 
 /* 부모-자식 통신용 노드 -------- */
 struct wait_status {
-    struct list_elem elem;     /* 부모의 children 리스트 연결용 */
-    struct semaphore  sema;    /* 자식 → 부모 종료 신호 */
+    tid_t tid;                 // 자식 tid
     int   exit_code;           /* 자식의 exit(status) 값 */
-    bool  exited;              /* 자식이 exit() 호출했는가? */
-    bool  waited;              /* 부모가 이미 wait() 했는가? */
+    struct semaphore sema;  // 부모가 기다릴 때
 };
 
 #endif /* userprog/process.h */
