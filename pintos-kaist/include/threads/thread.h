@@ -34,6 +34,8 @@ typedef int tid_t;
 #define FDT_PAGES 3
 #define OPEN_LIMIT 128 // 최대 동시 오흔 가능한 파일 (숫자 대신 FDT_PAGES *(1 << 9) 식으로도 작성 가능)
 
+struct wait_status;          /* [*]3-Q forward decl. */
+
 
 /* A kernel thread or user process.
  *
@@ -101,7 +103,7 @@ struct thread
 	int priority;			   /* Priority. */
 
 	/* Shared between thread.c and synch.c. */
-	struct list_elem elem; /* List element. */
+	// struct list_elem elem; /* List element. */
 
 	// [*]2-B. fd_table 이중 포인터 형으로 변경
 	// 각 스레드당 1페이지(4KB) 높은 주소에 커널 스택을, 낮은 주소에 스레드 구조체를 공유하는데
@@ -126,12 +128,15 @@ struct thread
 	int init_priority;		   //[*]1-2-3. 초창기 중요도
 	struct lock *wait_on_lock; //[*]1-2-3. release되기를 기다리고 있는 lock
 	struct list donations;	   //[*]1-2-3. 중요도 양도한 애 리스트
+	struct list_elem elem;    
 	struct list_elem d_elem;   //[*]1-2-3. 중요도 양도한 애 관리(prev, next)
 
 	// [*]2-B,O 자식의 종료신호를 기다리는 필드
 	struct list child_list;				// 자식 프로세스 정보 리스트
 	struct list_elem child_elem;
 	struct thread *parent;				// 나를 만든 부모 스레드
+    struct wait_status *wait_status;  /* [*]3-Q 내 상태 노드 */
+
 	int exit_status;					// exit(int status)에서 설정, 부모가 wait()에서 자식의 종료 코드를 수거할 수 있게 해주는 변수
 	// 복제가 잘 될때까지 부모가 기다리기 위한 세마포어
 	struct semaphore fork_sema;

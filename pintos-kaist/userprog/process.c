@@ -91,51 +91,39 @@ struct fork_info {
 };
 
 
-/* Clones the current process as `name`. Returns the new process's thread id, or
- * TID_ERROR if the thread cannot be created. */
-// [*]2-B. fork 구현
-tid_t process_fork(const char *name, struct intr_frame *if_ UNUSED)
+/* -------------------------------------------------------------------
+ * Fork the current user process.
+ *   ‣ 부모의 intr_frame(레지스터 스냅샷)을 자식 커널 스택에 복사
+ *   ‣ thread_create() 로 자식 커널 스레드 생성
+ *   ‣ 성공 시 wait/exit 교류용 wait_status 노드를 부모-자식에 연결
+ * ------------------------------------------------------------------- */
+tid_t
+process_fork (const char *name, struct intr_frame *parent_if)
 {
-	struct thread *cur = thread_current(); // 현재 부모 스레드
-	struct thread *real_child;
+    struct thread *cur = thread_current ();
+    /* intr_frame 를 커널 힙에 복사해 자식 스레드 시작 인자로 넘긴다. */
+    struct intr_frame *if_copy = malloc (sizeof *if_copy);
+    if (if_copy == NULL)
+        return TID_ERROR;
+    *if_copy = *parent_if;
 
-	//[*]3-B. 
-	struct fork_info *args = palloc_get_page(0);
-	if (args == NULL)
-		return TID_ERROR;
-	args->parent = thread_current();
-	memcpy(&args->parent_tf, &if_, sizeof(struct intr_frame));
+    /* 자식 스레드 생성 ─ __do_fork() 가 유저 공간 메모리/레지스터를
+       그대로 복제해 준다. */
+    tid_t tid = thread_create (name,
+                               PRI_DEFAULT,
+                               __do_fork,
+                               if_copy);
+    if (tid == TID_ERROR) {
+        free (if_copy);
+        return TID_ERROR;
+    }
 
+    /* ------------- 🔸 부모-자식 wait_status 연결 ------------- */
+    struct thread *child = get_thread_by_tid (tid);
+    ASSERT (child != NULL);
+    attach_child (cur, child);          /* helper: §3 에서 구현 */
 
-	tid_t tid = thread_create(name, PRI_DEFAULT, __do_fork, args);	//[*]3-B. if_->args
-	if (tid == TID_ERROR)
-	{
-		palloc_free_page(args);
-		return TID_ERROR;
-	}
-
-	struct list_elem *e;
-	for (e = list_begin(&cur->child_list); e != list_end(&cur->child_list); e = list_next(e)) // 자식 리스트를 순회
-	{
-		struct thread *child = list_entry(e, struct thread, child_elem);
-		
-		if (child->tid != tid){						   
-			continue;
-		}
-		else {
-			real_child = child;
-			break;
-		}
-	}
-
-	sema_down(&cur->fork_sema);
-	// 세마 업으로 깨어났을때, 정상복제인지 복제실패인지 확인하고 실패하면 TID_ERROR 반환;
-	if (real_child->exit_status == -1)
-	{	
-		return TID_ERROR;
-	}
-	
-	return tid;
+    return tid;
 }
 
 #ifndef VM
@@ -388,84 +376,145 @@ int process_exec(void *f_name)
  * This function will be implemented in problem 2-2.  For now, it
  * does nothing. */
 
-int process_wait(tid_t child_tid) // UNUSED 지움
-{
-	/* XXX: Hint) The pintos exit if process_wait (initd), we recommend you
-	 * XXX:       to add infinite loop here before
-	 * XXX:       implementing the process_wait. */
-	if (child_tid == -1){
-		return -1;
-	}
+// int process_wait(tid_t child_tid) // UNUSED 지움
+// {
+// 	/* XXX: Hint) The pintos exit if process_wait (initd), we recommend you
+// 	 * XXX:       to add infinite loop here before
+// 	 * XXX:       implementing the process_wait. */
+// 	if (child_tid == -1){
+// 		return -1;
+// 	}
 	
-	struct thread *cur = thread_current();
-	struct thread *real_child = NULL;
-	struct list_elem *e;
+// 	struct thread *cur = thread_current();
+// 	struct thread *real_child = NULL;
+// 	struct list_elem *e;
 
-	for (e = list_begin(&cur->child_list); e != list_end(&cur->child_list); e = list_next(e)) // 자식 리스트를 순회
-	{
-		struct thread *child = list_entry(e, struct thread, child_elem);
+// 	for (e = list_begin(&cur->child_list); e != list_end(&cur->child_list); e = list_next(e)) // 자식 리스트를 순회
+// 	{
+// 		struct thread *child = list_entry(e, struct thread, child_elem);
 		
-		if (child->tid != child_tid){
-		// child_tid가 일치하는 자식만wait								   
-			continue;
-		}
-		else {
-			real_child = child;
-			break;
-		}
-	}
+// 		if (child->tid != child_tid){
+// 		// child_tid가 일치하는 자식만wait								   
+// 			continue;
+// 		}
+// 		else {
+// 			real_child = child;
+// 			break;
+// 		}
+// 	}
 
-	if (real_child == NULL){
-		return -1;
-	}
-	sema_down(&real_child->exit_sema);	 // 자식이 종료될 때까지 대기 (sema_down)
-	//printf("sema up: %s\n", cur->name);
-	int status = real_child->exit_status; // 자식이 종료된 후 exit_status를 받아옴
+// 	if (real_child == NULL){
+// 		return -1;
+// 	}
+// 	sema_down(&real_child->exit_sema);	 // 자식이 종료될 때까지 대기 (sema_down)
+// 	//printf("sema up: %s\n", cur->name);
+// 	int status = real_child->exit_status; // 자식이 종료된 후 exit_status를 받아옴
 
-	list_remove(&real_child->child_elem);
-	sema_up(&real_child->free_sema);
+// 	list_remove(&real_child->child_elem);
+// 	sema_up(&real_child->free_sema);
 
-	return status;
+// 	return status;
 	
-	// // 자식 리스트에서 해당 pid를 찾지 못했거나 조건 미충족 시 -1 반환
-	// for (int i = 0; i < 1000000000; i++){
-	// }
-	// return -1;
+// 	// // 자식 리스트에서 해당 pid를 찾지 못했거나 조건 미충족 시 -1 반환
+// 	// for (int i = 0; i < 1000000000; i++){
+// 	// }
+// 	// return -1;
+// }
+
+int
+process_wait (tid_t child_tid)
+{
+    struct thread *curr = thread_current ();
+    struct wait_status *ws = lookup_child_ws (curr, child_tid);
+
+    /* 내 자식이 아니거나 이미 기다렸으면 오류 */
+    if (ws == NULL || ws->waited)
+        return -1;
+
+    ws->waited = true;        /* 두 번 wait() 방지 */
+
+    /* 아직 자식이 안 끝났으면 대기 */
+    if (!ws->exited)
+        sema_down (&ws->sema);
+
+    int exit_code = ws->exit_code;
+
+    /* 부모가 책임지고 리스트에서 제거 + 메모리 반납 */
+    list_remove (&ws->elem);
+    free (ws);
+
+    return exit_code;
 }
+
+
 
 /* Exit the process. This function is called by thread_exit (). */
-void process_exit(void)
+// void process_exit(void)
+// {
+// 	struct thread *cur = thread_current(); // 현재 종료 중인 스레드
+
+// 	/* TODO: Your code goes here.
+// 	 * TODO: Implement process termination message (see
+// 	 * TODO: project2/process_termination.html).
+// 	 * TODO: We recommend you to implement process resource cleanup here. */
+
+
+// 	// [*]2-B. 메모리 누수 해결!!
+// 	// 모든 열린 파일 먼저 닫기
+// 	if (cur->fd_table) {
+// 		for (int i = 2; i < OPEN_LIMIT; i++) {
+// 			if (cur->fd_table[i]) {
+// 				file_close(cur->fd_table[i]);
+// 				cur->fd_table[i] = NULL;
+// 			}
+// 		}
+// 	}	
+// 	// fd_table 메모리 해제
+// 	palloc_free_multiple(cur->fd_table, FDT_PAGES);
+
+// 	// 실행 중이던 파일 닫기
+// 	file_close(cur->running);
+
+// 	process_cleanup ();
+
+// 	sema_up(&cur->exit_sema);
+// 	sema_down(&cur->free_sema);
+
+// }
+
+static void
+process_exit (void)
 {
-	struct thread *cur = thread_current(); // 현재 종료 중인 스레드
+    struct thread *curr = thread_current ();
+    struct wait_status *ws = curr->wait_status;
 
-	/* TODO: Your code goes here.
-	 * TODO: Implement process termination message (see
-	 * TODO: project2/process_termination.html).
-	 * TODO: We recommend you to implement process resource cleanup here. */
+    /* -------- 1.  자식 → 부모 종료 통보 -------- */
+    if (ws != NULL) {
+        ws->exit_code = curr->exit_status;
+        ws->exited    = true;
+        sema_up (&ws->sema);          /* 알림만!  리스트는 건드리지 않음 */
+    }
 
+    /* -------- 2.  (기존 자원 정리 루틴) -------- */
+#ifdef VM
+    if (!hash_empty (&curr->spt.spt_hash))
+        spt_drop_pte_mappings (&curr->spt, curr->pml4);
+    if (!hash_empty (&curr->spt.spt_hash))
+        supplemental_page_table_kill (&curr->spt);
+#endif
 
-	// [*]2-B. 메모리 누수 해결!!
-	// 모든 열린 파일 먼저 닫기
-	if (cur->fd_table) {
-		for (int i = 2; i < OPEN_LIMIT; i++) {
-			if (cur->fd_table[i]) {
-				file_close(cur->fd_table[i]);
-				cur->fd_table[i] = NULL;
-			}
-		}
-	}	
-	// fd_table 메모리 해제
-	palloc_free_multiple(cur->fd_table, FDT_PAGES);
+    uint64_t *pml4 = curr->pml4;
+    if (pml4 != NULL) {
+        curr->pml4 = NULL;
+        pml4_activate (NULL);
+        pml4_destroy (pml4);
+    }
 
-	// 실행 중이던 파일 닫기
-	file_close(cur->running);
-
-	process_cleanup ();
-
-	sema_up(&cur->exit_sema);
-	sema_down(&cur->free_sema);
-
+    /* 파일, fd, 기타 자원 해제 (기존 코드 유지) */
+    thread_exit ();   /* 절대 반환 안 함 */
 }
+
+
 
 /* Free the current process's resources. */
 // static void
@@ -1028,3 +1077,35 @@ setup_stack(struct intr_frame *if_)
 	return success;
 }
 #endif /* VM */
+
+
+/* static */ void
+attach_child (struct thread *parent, struct thread *child)
+{
+    struct wait_status *ws = malloc (sizeof *ws);
+    ASSERT (ws != NULL);
+
+    ws->tid       = child->tid;
+    ws->exit_code = -1;
+    ws->exited    = false;
+    ws->waited    = false;
+    sema_init (&ws->sema, 0);
+
+    child->wait_status = ws;               /* 자식이 자기 노드 가짐        */
+    list_push_back (&parent->child_list, &ws->elem); /* 부모 리스트에 등록 */
+}
+
+static struct wait_status *
+lookup_child_ws (struct thread *parent, tid_t child_tid)
+{
+    struct list_elem *e;
+    for (e = list_begin (&parent->child_list);
+         e != list_end (&parent->child_list);
+         e = list_next (e))
+    {
+        struct wait_status *ws = list_entry (e, struct wait_status, elem);
+        if (ws->tid == child_tid)
+            return ws;
+    }
+    return NULL;
+}
