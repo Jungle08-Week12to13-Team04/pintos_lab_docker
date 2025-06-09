@@ -20,9 +20,22 @@ struct lock swap_lock;//[*]3-L
 // 전역 Frame Table 리스트
 struct list frame_table;
 
+/* ---------- page-merge 전역 ---------- */
+struct hash merge_map;
+struct lock merge_lock;
+
+static unsigned       merge_hash (const struct hash_elem *, void *);
+static bool           merge_less (const struct hash_elem *,
+                                  const struct hash_elem *, void *);
+static struct page   *merge_lookup (struct inode *, off_t, bool writable);
+
 
 void
 vm_init (void) {
+  /* page-merge 초기화 */
+  hash_init (&merge_map, merge_hash, merge_less, NULL);
+  lock_init (&merge_lock);
+
   vm_anon_init ();
   vm_file_init ();
 
@@ -175,22 +188,27 @@ vm_evict_frame (void) {
  * 이 함수는 항상 유효한 주소를 반환합니다. 즉, 사용자 풀 메모리가 가득 찼을 때도,
  * 이 함수는 frame을 교체하여 가용 메모리를 확보합니다. */
 static struct frame *
-vm_get_frame (void) {
+vm_get_frame (void)
+{
+    struct frame *frame = malloc (sizeof *frame);
+    frame->kva = palloc_get_page (PAL_USER);
 
-	struct frame *frame = (struct frame*)malloc(sizeof(struct frame)); 
-
-	frame->kva = palloc_get_page(PAL_USER); 
-    if(frame->kva == NULL) { 
-        frame = vm_evict_frame(); 
+    if (frame->kva == NULL)            /* ⓐ 교체가 필요한 경우 */
+    {
+        frame = vm_evict_frame ();
         frame->page = NULL;
-
-        return frame; 
+        /* 이 순간부터는 “새로운 사용자”가 쓰므로 ref-cnt 초기화 */
+        frame->shared_cnt = 1;
+        return frame;
     }
-    list_push_back (&frame_table, &frame->frame_elem); 
+
+    /* ⓑ 정상 할당된 경우 */
+    list_push_back (&frame_table, &frame->frame_elem);
     frame->page = NULL;
-	ASSERT (frame != NULL);
-	ASSERT (frame->page == NULL);
-	return frame;
+    frame->shared_cnt = 1;             /* ★ 여기 추가 */
+    ASSERT (frame != NULL);
+    ASSERT (frame->page == NULL);
+    return frame;
 }
 
 
@@ -391,4 +409,89 @@ page_less(const struct hash_elem *a_, const struct hash_elem *b_, void *aux UNUS
     const struct page *b = hash_entry(b_, struct page, hash_elem);
 
     return a->va < b->va;
+}
+
+
+/* ================= page-merge 구현부 ================= */
+
+static unsigned
+merge_hash (const struct hash_elem *e, void *aux UNUSED)
+{
+    const struct merge_entry *me = hash_entry (e, struct merge_entry, h_elem);
+    return (unsigned)me->key.ofs ^ hash_bytes (&me->key.inode, sizeof me->key.inode);
+}
+
+static bool
+merge_less (const struct hash_elem *a, const struct hash_elem *b,
+            void *aux UNUSED)
+{
+    const struct merge_entry *x = hash_entry (a, struct merge_entry, h_elem);
+    const struct merge_entry *y = hash_entry (b, struct merge_entry, h_elem);
+
+    if (x->key.inode != y->key.inode)      return x->key.inode < y->key.inode;
+    if (x->key.ofs   != y->key.ofs)        return x->key.ofs   < y->key.ofs;
+    return x->key.writable < y->key.writable;
+}
+
+/* inode+ofs 로 기존 공유 페이지가 있으면 반환. */
+static struct page *
+merge_lookup (struct inode *inode, off_t ofs, bool writable)
+{
+    struct merge_key k = { inode, ofs, writable };
+    struct merge_entry dummy = { .key = k };
+    struct hash_elem *e = hash_find (&merge_map, &dummy.h_elem);
+    return e ? hash_entry (e, struct merge_entry, h_elem)->page : NULL;
+}
+
+/* (1) 파일-backed 페이지가 만들어질 때 호출 – 중복 있으면 share */
+void
+merge_try_share (struct page *p)
+{
+    if (p->operations != &file_ops) return;      /* file page만 대상 */
+
+    struct file_page *fp = &p->file;
+    struct inode *inode = file_get_inode (fp->file);
+    off_t ofs = fp->ofs;
+
+    lock_acquire (&merge_lock);
+    struct page *exist = merge_lookup (inode, ofs, p->writable);
+    if (exist) {
+        /* 이미 같은 내용이 물리 메모리에 있음 → 같은 frame 공유 */
+        p->frame = exist->frame;
+        p->frame->shared_cnt++;               /* frame.c 에서 필드 추가(아래) */
+    } else {
+        /* 처음 등장 → 해시 삽입 */
+        struct merge_entry *me = malloc (sizeof *me);
+        me->key   = (struct merge_key){ inode, ofs, p->writable };
+        me->page  = p;
+        hash_insert (&merge_map, &me->h_elem);
+        /* frame->shared_cnt 는 frame_alloc() 시 1 로 초기화돼 있음 */
+    }
+    lock_release (&merge_lock);
+}
+
+
+/* (2) 페이지가 swap OUT•evict 되거나 munmap 으로 사라질 때 호출 */
+void
+merge_delete (struct page *p)
+{
+    if (p->operations != &file_ops) return;
+
+    struct file_page *fp = &p->file;
+    struct inode *inode = file_get_inode (fp->file);
+    off_t ofs = fp->ofs;
+
+    lock_acquire (&merge_lock);
+    struct merge_entry dummy = { .key = { inode, ofs, p->writable } };
+    struct hash_elem *e = hash_find (&merge_map, &dummy.h_elem);
+
+    if (e) {
+        struct merge_entry *me = hash_entry (e, struct merge_entry, h_elem);
+        if (me->page == p) {
+            /* 대표 노드가 사라짐 → 해시에서 제거 */
+            hash_delete (&merge_map, e);
+            free (me);
+        }
+    }
+    lock_release (&merge_lock);
 }

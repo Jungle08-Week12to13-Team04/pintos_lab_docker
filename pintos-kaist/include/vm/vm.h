@@ -64,13 +64,14 @@ struct page {
 #endif
 	};
 };
-
+// [*]3-Q.
 /* "프레임"을 나타내는 구조체 */
 struct frame {
     void *kva; // 프레임의 커널 가상주소
     struct page *page; // 연결된 유저 페이지
     struct list_elem frame_elem; // frame_table에서 연결될 list 요소
-    bool pinned; // 교체 보호 여부
+	bool pinned; // 교체 보호 여부
+	int shared_cnt; // 공유 카운트
 };
 
 // [*]3-B. 추가
@@ -128,5 +129,30 @@ enum vm_type page_get_type (struct page *page);
 // [*]3-B. 추가
 unsigned page_hash(const struct hash_elem *p_, void *aux UNUSED);
 bool page_less(const struct hash_elem *a_, const struct hash_elem *b_, void *aux);
+
+/* ---------- page-merge (file page deduplication) ---------- */
+/* 같은 파일·offset·writable 속성의 페이지를 해시로 관리한다. */
+struct merge_key {
+    struct inode *inode;        /* 파일 식별   */
+    off_t         ofs;          /* 파일 내 위치 */
+    bool          writable;     /* R/O vs R/W   */
+};
+
+struct merge_entry {
+    struct hash_elem h_elem;    /* merge_map 노드 */
+    struct merge_key key;
+    struct page     *page;      /* 대표 페이지   */
+};
+
+/* 전역 해시/락 – vm.c 에 정의 */
+extern struct hash merge_map;
+extern struct lock merge_lock;
+
+/* 헬퍼 – vm.c 구현 */
+void     merge_init       (void);
+void     merge_try_share  (struct page *p);
+void     merge_delete     (struct page *p);
+
+
 
 #endif  /* VM_VM_H */
