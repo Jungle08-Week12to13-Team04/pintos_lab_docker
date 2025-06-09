@@ -456,15 +456,14 @@ void process_exit(void)
 	}	
 	// fd_table 메모리 해제
 	palloc_free_multiple(cur->fd_table, FDT_PAGES);
-	// 실행 중이던 파일 닫기
-	if (cur->running) {
-		file_close(cur->running);
-	}
 
+	// 실행 중이던 파일 닫기
+	file_close(cur->running);
+
+	process_cleanup ();
 
 	sema_up(&cur->exit_sema);
 	sema_down(&cur->free_sema);
-	process_cleanup(); // 그 외 자원 정리 (page table, 파일 디스크립터 등)
 
 }
 
@@ -476,17 +475,8 @@ process_cleanup(void)
 
 #ifdef VM
 
-	struct hash_iterator i;
-
-    /* PML4 파괴 전에, 파일 매핑된 페이지를 모두 do_munmap으로 언맵 */
-    hash_first(&i, &curr->spt.spt_hash);
-    while (hash_next(&i)) {
-        struct page *p = hash_entry(hash_cur(&i), struct page, hash_elem);
-        if (p->operations->type == VM_FILE) {
-            do_munmap(p->va);
-        }
-    }
-	supplemental_page_table_kill(&curr->spt);
+	if(!hash_empty(&curr->spt.spt_hash)) 
+		supplemental_page_table_kill (&curr->spt);
 	
 #endif
 

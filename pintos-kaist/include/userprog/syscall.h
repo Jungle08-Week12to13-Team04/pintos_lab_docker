@@ -10,5 +10,6 @@ struct lock filesys_lock; // [*]2-K: 파일 시스템 락 추가
 
 void *sys_mmap(void *addr, size_t length, int writable, int fd, off_t offset);
 void sys_munmap(void *addr);
+void sys_close(int fd);
 
 #endif /* userprog/syscall.h */
