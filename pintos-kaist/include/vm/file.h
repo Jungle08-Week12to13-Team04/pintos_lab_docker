@@ -13,6 +13,7 @@ struct file_page {
     enum vm_type type;
 };
 
+const struct page_operations file_ops;
 
 
 void vm_file_init (void);

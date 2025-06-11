@@ -11,13 +11,14 @@
 
 #define ROUND_UP(X, STEP) (((X) + (STEP) - 1) & ~((STEP) - 1))//[*]3-L
 
+extern struct lock filesys_lock;  // filesys/filesys.c 에 선언된 락
 
 static bool file_backed_swap_in (struct page *page, void *kva);
 static bool file_backed_swap_out (struct page *page);
 static void file_backed_destroy (struct page *page);
 
 /* 이 구조체는 수정하지 마십시오 */
-static const struct page_operations file_ops = {
+const struct page_operations file_ops = {
 	.swap_in = file_backed_swap_in,
 	.swap_out = file_backed_swap_out,
 	.destroy = file_backed_destroy,
@@ -33,9 +34,9 @@ vm_file_init (void) {
 
 /* 파일을 기반으로 하는 페이지(file-backed page)를 초기화합니다 */
 bool file_backed_initializer (struct page *page, enum vm_type type, void *kva) {
-	page->operations = &file_ops;
 	struct file_page *file_page = &page->file;
-
+    page->operations = &file_ops;
+    merge_try_share(page);
     return true;
 }
 
@@ -98,6 +99,8 @@ file_backed_swap_out (struct page *page) {
 /* 파일 기반 페이지를 파괴(destroy)합니다. PAGE는 호출자가 해제합니다. */
 static void//[*]3-L
 file_backed_destroy(struct page *page) {
+    merge_delete(page); //[*]3-Q
+
 	// mmap한 페이지가 메모리에 존재했다면 (frame이 있었다면)
 	if (page->frame != NULL) {
 		struct segment_aux *segment_aux = (struct segment_aux *) page->uninit.aux;

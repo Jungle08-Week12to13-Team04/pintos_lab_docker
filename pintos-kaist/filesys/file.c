@@ -2,6 +2,9 @@
 #include <debug.h>
 #include "filesys/inode.h"
 #include "threads/malloc.h"
+#include "threads/synch.h"
+
+extern struct lock filesys_lock;  /* [*]3-Q ilesys/filesys.c에서 선언된 전역 락 */
 
 /* An open file. */
 struct file {
@@ -83,9 +86,16 @@ file_read (struct file *file, void *buffer, off_t size) {
  * Returns the number of bytes actually read,
  * which may be less than SIZE if end of file is reached.
  * The file's current position is unaffected. */
-off_t
-file_read_at (struct file *file, void *buffer, off_t size, off_t file_ofs) {
-	return inode_read_at (file->inode, buffer, size, file_ofs);
+// off_t
+// file_read_at (struct file *file, void *buffer, off_t size, off_t file_ofs) {
+// 	return inode_read_at (file->inode, buffer, size, file_ofs);
+// }
+//[*]3-Q
+off_t file_read_at (struct file *file, void *buffer, off_t size, off_t ofs) {
+  lock_acquire(&filesys_lock);
+  off_t bytes = inode_read_at(file->inode, buffer, size, ofs);
+  lock_release(&filesys_lock);
+  return bytes;
 }
 
 /* Writes SIZE bytes from BUFFER into FILE,
@@ -109,10 +119,17 @@ file_write (struct file *file, const void *buffer, off_t size) {
  * (Normally we'd grow the file in that case, but file growth is
  * not yet implemented.)
  * The file's current position is unaffected. */
-off_t
-file_write_at (struct file *file, const void *buffer, off_t size,
-		off_t file_ofs) {
-	return inode_write_at (file->inode, buffer, size, file_ofs);
+// off_t
+// file_write_at (struct file *file, const void *buffer, off_t size,
+// 		off_t file_ofs) {
+// 	return inode_write_at (file->inode, buffer, size, file_ofs);
+// }
+//[*]3-Q
+off_t file_write_at (struct file *file, const void *buffer, off_t size, off_t ofs) {
+  lock_acquire(&filesys_lock);
+  off_t bytes = inode_write_at(file->inode, buffer, size, ofs);
+  lock_release(&filesys_lock);
+  return bytes;
 }
 
 /* Prevents write operations on FILE's underlying inode

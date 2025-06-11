@@ -54,6 +54,10 @@ bool anon_initializer(struct page *page, enum vm_type type, void *kva) {
 // [*]3-L / [*]3-B. 전체적으로 변경
 static bool anon_swap_in(struct page *page, void *kva) {
     struct anon_page *anon_page = &page->anon;
+    
+    if (anon_page->swap_idx == (size_t)-1)
+        return true;   
+
     size_t swap_idx = anon_page->swap_idx;
 
     for (int i = 0; i < SECTORS_PER_PAGE; i++) {

@@ -295,25 +295,71 @@ vm_claim_page (void *va UNUSED) {
 	return vm_do_claim_page (page);
 }
 
-/* Claim the PAGE and set up the mmu. */
+/* vm.c */
+
+/* 페이지를 실제로 메모리에 바인딩할 때 호출되는 함수 */
+// [*]3-Q
 static bool
 vm_do_claim_page (struct page *page) {
-	struct frame *frame = vm_get_frame ();
+    struct thread *cur = thread_current ();
+    void *upage       = page->va;
+    bool writable     = page->writable;
 
-	/* Set links */
-	frame->page = page;
-	page->frame = frame;
+    /* ▶ 파일 기반 페이지라면, 먼저 merge_map에서 같은 (inode, ofs, writable) 키를 찾아본다 */
+    if (page->operations == &file_ops) {
+        struct file_page *fp = &page->file;
+        struct inode     *inode = file_get_inode(fp->file);
+        off_t              ofs   = fp->ofs;
 
-	/* TODO: 페이지의 VA를 프레임의 PA에 매핑하기 위한 페이지 테이블 엔트리를 삽입합니다. */
-	// [*]3-B. 가상 주소와 물리 주소를 매핑
+        lock_acquire(&merge_lock);
+        struct page *found = merge_lookup(inode, ofs, writable);
+        if (found) {
+            /* 이미 로드된 프레임을 공유 */
+            found->frame->shared_cnt++;
+            page->frame = found->frame;
+            pml4_set_page(cur->pml4, upage,
+                          found->frame->kva,
+                          writable);
+            lock_release(&merge_lock);
+            return true;
+        }
+        lock_release(&merge_lock);
+    }
 
-    struct thread *curr = thread_current();
-	bool writable = page -> writable; 
-	pml4_set_page(curr->pml4, page->va, frame->kva, writable); 
+    /* ▶ (공유 가능한 게 없다면) 기존 로직: 새 프레임 할당 + swap_in + 페이지 매핑 */
+    struct frame *frame = vm_get_frame ();
 
-	return swap_in (page, frame->kva);
+    /* ⌘ 여기에 추가: 페이지 아웃(or 언맵) 전에 해시에서 깨끗하게 지워 주기 */
+    if (page->operations == &file_ops) {
+        lock_acquire(&merge_lock);
+        merge_delete(page);
+        lock_release(&merge_lock);
+    }
+
+    frame->page = page;
+    page->frame = frame;
+    pml4_set_page(cur->pml4, upage, frame->kva, writable);
+    if (!swap_in(page, frame->kva))
+        return false;
+
+    /* ▶ 파일 기반 페이지라면, 이 새로 로드된 페이지를 merge_map에 등록 */
+    if (page->operations == &file_ops) {
+        struct file_page *fp = &page->file;
+        struct inode     *inode = file_get_inode(fp->file);
+        off_t              ofs   = fp->ofs;
+
+        lock_acquire(&merge_lock);
+        struct merge_entry *me = malloc(sizeof *me);
+        me->key.inode    = inode;
+        me->key.ofs      = ofs;
+        me->key.writable = writable;
+        me->page         = page;
+        hash_insert(&merge_map, &me->h_elem);
+        lock_release(&merge_lock);
+    }
+
+    return true;
 }
-
 
 /* 새로운 보조 페이지 테이블(supplemental page table)을 초기화합니다. */
 void
@@ -323,40 +369,72 @@ supplemental_page_table_init (struct supplemental_page_table *spt UNUSED) {
 }
 
 /* 보조 페이지 테이블을 src에서 dst로 복사합니다. */
-bool
-supplemental_page_table_copy (struct supplemental_page_table *dst UNUSED,
-		struct supplemental_page_table *src UNUSED) {
+// bool
+// supplemental_page_table_copy (struct supplemental_page_table *dst UNUSED,
+// 		struct supplemental_page_table *src UNUSED) {
 	
-	// [*]3-B. 추가
-	struct thread *curr = thread_current(); 
+// 	// [*]3-B. 추가
+// 	struct thread *curr = thread_current(); 
 
-	struct hash_iterator i; 
-    hash_first (&i, &src->spt_hash);
-    while (hash_next (&i)) {
-        struct page *parent_page = hash_entry (hash_cur (&i), struct page, hash_elem); 
-        enum vm_type parent_type = parent_page->operations->type; 
-        if(parent_type == VM_UNINIT){
-            if(!vm_alloc_page_with_initializer(parent_page->uninit.type, parent_page->va, \
-				parent_page->writable, parent_page->uninit.init, parent_page->uninit.aux))
-                return false;
-		}
-        else { 
+// 	struct hash_iterator i; 
+//     hash_first (&i, &src->spt_hash);
+//     while (hash_next (&i)) {
+//         struct page *parent_page = hash_entry (hash_cur (&i), struct page, hash_elem); 
+//         enum vm_type parent_type = parent_page->operations->type; 
+//         if(parent_type == VM_UNINIT){
+//             if(!vm_alloc_page_with_initializer(parent_page->uninit.type, parent_page->va, \
+// 				parent_page->writable, parent_page->uninit.init, parent_page->uninit.aux))
+//                 return false;
+// 		}
+//         else { 
 
-			if (parent_type & VM_MARKER_0)
-				setup_stack(&thread_current()->tf); 
+// 			if (parent_type & VM_MARKER_0)
+// 				setup_stack(&thread_current()->tf); 
 
-			else
-				if(!vm_alloc_page(parent_type, parent_page->va, parent_page->writable)) 
-					return false;
-				if(!vm_claim_page(parent_page->va)) 
-					return false;
+// 			else
+// 				if(!vm_alloc_page(parent_type, parent_page->va, parent_page->writable)) 
+// 					return false;
+// 				if(!vm_claim_page(parent_page->va)) 
+// 					return false;
 			
 
-            struct page* child_page = spt_find_page(dst, parent_page->va);
-            memcpy(child_page->frame->kva, parent_page->frame->kva, PGSIZE); 
-		}
+//             struct page* child_page = spt_find_page(dst, parent_page->va);
+//             memcpy(child_page->frame->kva, parent_page->frame->kva, PGSIZE); 
+// 		}
+//     }
+//     return true;
+// }
+
+bool supplemental_page_table_copy(struct supplemental_page_table *dst,
+                                  struct supplemental_page_table *src) {
+  struct hash_iterator i;
+  hash_first(&i, &src->spt_hash);
+  while (hash_next(&i)) {
+    struct page *p = hash_entry(hash_cur(&i), struct page, hash_elem);
+    enum vm_type t = page_get_type(p);
+    if (t == VM_UNINIT) {
+      vm_alloc_page_with_initializer(
+        p->uninit.type, p->va, p->writable,
+        p->uninit.init, p->uninit.aux);
     }
-    return true;
+    else if (t == VM_ANON) {
+      /* anon 페이지만 즉시 적재해서 복사 */
+      vm_alloc_page(VM_ANON, p->va, p->writable);
+      vm_claim_page (p->va);
+      struct page *c = spt_find_page(dst, p->va);
+      memcpy (c->frame->kva, p->frame->kva, PGSIZE);
+    }
+    else if (t == VM_FILE) {
+      /* file-backed 페이지는 lazy-load 상태로 복사만 */
+      vm_alloc_page_with_initializer(
+        VM_FILE, p->va, p->writable,
+        p->uninit.init, p->uninit.aux);
+    }
+    else if (t & VM_MARKER_0) {
+      setup_stack(&thread_current()->tf);
+    }
+  }
+  return true;
 }
 
 // [*]3-B. 추가
